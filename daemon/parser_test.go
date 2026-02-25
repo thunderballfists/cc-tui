@@ -1,6 +1,8 @@
 package daemon
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestEncodeProjectPath(t *testing.T) {
 	tests := []struct {
@@ -15,5 +17,19 @@ func TestEncodeProjectPath(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("EncodeProjectPath(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestLoadHistory(t *testing.T) {
+	sessions, err := LoadHistory("testdata/history.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("got %d sessions, want 2", len(sessions))
+	}
+	// Should be sorted by last_ts desc
+	if sessions[0].ID != "def-456" {
+		t.Errorf("first session = %q, want def-456", sessions[0].ID)
 	}
 }
