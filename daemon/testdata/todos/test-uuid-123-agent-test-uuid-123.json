@@ -1,0 +1,5 @@
+[
+  {"content":"Search codebase for existing references","status":"completed","activeForm":"Searching codebase"},
+  {"content":"Implement the parser logic","status":"in_progress","activeForm":"Implementing parser"},
+  {"content":"Write integration tests","status":"pending","activeForm":"Writing tests"}
+]

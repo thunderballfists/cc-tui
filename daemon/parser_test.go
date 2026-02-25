@@ -49,3 +49,32 @@ func TestLoadSessionMeta(t *testing.T) {
 		t.Errorf("gitBranch = %q, want feat/user-api", meta.GitBranch)
 	}
 }
+
+func TestLoadTasks(t *testing.T) {
+	tasks := LoadTasks("test-uuid-123", "testdata/tasks")
+	if len(tasks) != 2 {
+		t.Fatalf("got %d tasks, want 2", len(tasks))
+	}
+	found := false
+	for _, task := range tasks {
+		if task.Subject == "Set up project structure" && task.Status == "completed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected to find 'Set up project structure' task with status completed")
+	}
+}
+
+func TestLoadTodos(t *testing.T) {
+	todos := LoadTodos("test-uuid-123", "testdata/todos")
+	if len(todos) != 3 {
+		t.Fatalf("got %d todos, want 3", len(todos))
+	}
+	if todos[0].Content != "Search codebase for existing references" {
+		t.Errorf("first todo content = %q", todos[0].Content)
+	}
+	if todos[0].Status != "completed" {
+		t.Errorf("first todo status = %q, want completed", todos[0].Status)
+	}
+}

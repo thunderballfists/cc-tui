@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
+
+	"cc-tui/model"
 )
 
 var nonAlphanumHyphen = regexp.MustCompile(`[^a-zA-Z0-9-]`)
@@ -210,4 +213,52 @@ func LoadSessionMeta(jsonlPath string) SessionMeta {
 	}
 
 	return meta
+}
+
+func LoadTasks(sessionUUID, tasksDir string) []model.Task {
+	dir := filepath.Join(tasksDir, sessionUUID)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var tasks []model.Task
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var t model.Task
+		if err := json.Unmarshal(data, &t); err != nil {
+			continue
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks
+}
+
+func LoadTodos(sessionUUID, todosDir string) []model.Todo {
+	if sessionUUID == "" {
+		return nil
+	}
+	pattern := filepath.Join(todosDir, sessionUUID+"-agent-*.json")
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil
+	}
+	var allTodos []model.Todo
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var items []model.Todo
+		if err := json.Unmarshal(data, &items); err != nil {
+			continue
+		}
+		allTodos = append(allTodos, items...)
+	}
+	return allTodos
 }
