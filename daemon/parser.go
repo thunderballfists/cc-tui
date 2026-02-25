@@ -114,3 +114,100 @@ func LoadHistory(historyPath string) ([]HistoryEntry, error) {
 	})
 	return result, nil
 }
+
+type SessionMeta struct {
+	Slug        string
+	Title       string
+	LastUserMsg string
+	GitBranch   string
+}
+
+func LoadSessionMeta(jsonlPath string) SessionMeta {
+	meta := SessionMeta{}
+	if jsonlPath == "" {
+		return meta
+	}
+
+	f, err := os.Open(jsonlPath)
+	if err != nil {
+		return meta
+	}
+	defer f.Close()
+
+	// Read all lines into memory so we can scan forward and backward
+	var lines [][]byte
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	for scanner.Scan() {
+		line := make([]byte, len(scanner.Bytes()))
+		copy(line, scanner.Bytes())
+		lines = append(lines, line)
+	}
+
+	if len(lines) == 0 {
+		return meta
+	}
+
+	// Forward pass: first 20 lines for slug and custom-title
+	limit := 20
+	if limit > len(lines) {
+		limit = len(lines)
+	}
+	for _, line := range lines[:limit] {
+		var d map[string]interface{}
+		if err := json.Unmarshal(line, &d); err != nil {
+			continue
+		}
+		if slug, ok := d["slug"].(string); ok && slug != "" && meta.Slug == "" {
+			meta.Slug = slug
+		}
+		if dtype, ok := d["type"].(string); ok && dtype == "custom-title" && meta.Title == "" {
+			if title, ok := d["customTitle"].(string); ok {
+				meta.Title = title
+			}
+		}
+		if meta.Slug != "" && meta.Title != "" {
+			break
+		}
+	}
+
+	// Reverse pass: last user message, git branch, slug (if still missing)
+	for i := len(lines) - 1; i >= 0; i-- {
+		var d map[string]interface{}
+		if err := json.Unmarshal(lines[i], &d); err != nil {
+			continue
+		}
+		dtype, _ := d["type"].(string)
+
+		if dtype == "custom-title" && meta.Title == "" {
+			if title, ok := d["customTitle"].(string); ok {
+				meta.Title = title
+			}
+		}
+
+		if dtype == "user" && meta.LastUserMsg == "" {
+			msg, _ := d["message"].(map[string]interface{})
+			if msg != nil {
+				content, _ := msg["content"].(string)
+				if content != "" && content != "exit" && content != "/exit" && content != "/compact" {
+					if len(content) > 120 {
+						content = content[:120]
+					}
+					meta.LastUserMsg = content
+					if branch, ok := d["gitBranch"].(string); ok && branch != "" {
+						meta.GitBranch = branch
+					}
+				}
+			}
+			if slug, ok := d["slug"].(string); ok && slug != "" && meta.Slug == "" {
+				meta.Slug = slug
+			}
+		}
+
+		if meta.Title != "" && meta.LastUserMsg != "" && meta.Slug != "" {
+			break
+		}
+	}
+
+	return meta
+}

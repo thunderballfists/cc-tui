@@ -1,0 +1,8 @@
+{"type":"file-history-snapshot","messageId":"test-1"}
+{"type":"summary","sessionId":"test-uuid","slug":"test-slug","version":"2.1.25"}
+{"type":"custom-title","customTitle":"My Test Session","sessionId":"test-uuid"}
+{"type":"progress","data":{"type":"hook_progress"}}
+{"type":"user","message":{"role":"user","content":"exit"},"timestamp":"2024-01-01T00:00:00Z","gitBranch":"main"}
+{"type":"assistant","message":{"role":"assistant","content":"OK"},"timestamp":"2024-01-01T00:01:00Z"}
+{"type":"user","message":{"role":"user","content":"Implement the REST API endpoints for the user service"},"timestamp":"2024-01-01T00:02:00Z","gitBranch":"feat/user-api"}
+{"type":"assistant","message":{"role":"assistant","content":"I'll implement the REST API endpoints."},"timestamp":"2024-01-01T00:03:00Z"}
