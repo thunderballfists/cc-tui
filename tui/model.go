@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"cc-tui/model"
 
@@ -19,6 +20,8 @@ type ActionMsg struct {
 // RefreshMsg requests data refresh from daemon.
 type RefreshMsg struct{}
 
+const headerHeight = 1 // header line offset for mouse click mapping
+
 // TreeModel manages the tree state and keyboard navigation.
 type TreeModel struct {
 	roots        []*TreeNode
@@ -28,6 +31,8 @@ type TreeModel struct {
 	height       int
 	width        int
 	keys         KeyMap
+	lastClickIdx int
+	lastClickAt  time.Time
 }
 
 func NewTreeModel() TreeModel {
@@ -59,6 +64,47 @@ func (m *TreeModel) rebuildVisible() {
 
 func (m TreeModel) Update(msg tea.Msg) (TreeModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		if msg.Type == tea.MouseLeft {
+			clickedIdx := msg.Y - headerHeight + m.scrollOffset
+			if clickedIdx >= 0 && clickedIdx < len(m.visible) {
+				now := time.Now()
+				// Double-click detection: same node within 400ms
+				if clickedIdx == m.lastClickIdx && now.Sub(m.lastClickAt) < 400*time.Millisecond {
+					m.cursor = clickedIdx
+					m.lastClickIdx = -1
+					return m, m.openAction("open")
+				}
+				m.cursor = clickedIdx
+				m.lastClickIdx = clickedIdx
+				m.lastClickAt = now
+				// Single click: toggle expand/collapse
+				node := m.visible[clickedIdx]
+				if len(node.Children) > 0 {
+					node.Expanded = !node.Expanded
+					m.rebuildVisible()
+				}
+			}
+		} else if msg.Type == tea.MouseWheelUp {
+			if m.scrollOffset > 0 {
+				m.scrollOffset--
+				if m.cursor > m.scrollOffset+m.height-4 {
+					m.cursor = m.scrollOffset + m.height - 4
+				}
+			}
+		} else if msg.Type == tea.MouseWheelDown {
+			maxOffset := len(m.visible) - (m.height - 3)
+			if maxOffset < 0 {
+				maxOffset = 0
+			}
+			if m.scrollOffset < maxOffset {
+				m.scrollOffset++
+				if m.cursor < m.scrollOffset {
+					m.cursor = m.scrollOffset
+				}
+			}
+		}
+
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.keys.Up):
