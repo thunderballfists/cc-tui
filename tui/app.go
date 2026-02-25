@@ -3,6 +3,10 @@ package tui
 import (
 	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
 
 	"cc-tui/model"
 	"cc-tui/protocol"
@@ -14,9 +18,8 @@ import (
 
 type App struct {
 	tree     TreeModel
-	conn     net.Conn
-	enc      *json.Encoder
-	dec      *json.Decoder
+	sockPath string
+	mu       sync.Mutex
 	width    int
 	height   int
 	showHelp bool
@@ -25,15 +28,20 @@ type App struct {
 
 type sessionsMsg []model.Session
 type errMsg struct{ err error }
+type tickMsg time.Time
 
 func (e errMsg) Error() string { return e.err.Error() }
 
 func NewApp(conn net.Conn) *App {
+	// We close the initial probe connection; we'll connect fresh for each request
+	conn.Close()
+
+	home, _ := os.UserHomeDir()
+	sockPath := filepath.Join(home, ".claude", "cc-tui.sock")
+
 	return &App{
-		tree: NewTreeModel(),
-		conn: conn,
-		enc:  json.NewEncoder(conn),
-		dec:  json.NewDecoder(conn),
+		tree:     NewTreeModel(),
+		sockPath: sockPath,
 	}
 }
 
@@ -41,14 +49,46 @@ func (a *App) Init() tea.Cmd {
 	return tea.Batch(
 		a.fetchTree(),
 		tea.EnableMouseCellMotion,
+		tickCmd(),
 	)
+}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
+func (a *App) doRequest(req protocol.Request) (*protocol.Response, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	conn, err := net.DialTimeout("unix", a.sockPath, 2*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	enc := json.NewEncoder(conn)
+	dec := json.NewDecoder(conn)
+
+	if err := enc.Encode(req); err != nil {
+		return nil, err
+	}
+
+	var resp protocol.Response
+	if err := dec.Decode(&resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 func (a *App) fetchTree() tea.Cmd {
 	return func() tea.Msg {
-		a.enc.Encode(protocol.Request{Cmd: "tree"})
-		var resp protocol.Response
-		if err := a.dec.Decode(&resp); err != nil {
+		resp, err := a.doRequest(protocol.Request{Cmd: "tree"})
+		if err != nil {
 			return errMsg{err}
 		}
 		return sessionsMsg(resp.Sessions)
@@ -57,23 +97,21 @@ func (a *App) fetchTree() tea.Cmd {
 
 func (a *App) sendAction(action, sessionID, project string) tea.Cmd {
 	return func() tea.Msg {
-		a.enc.Encode(protocol.Request{
+		resp, err := a.doRequest(protocol.Request{
 			Cmd:       "action",
 			Action:    action,
-			SessionID: project, // use project path as identifier
+			SessionID: project,
 		})
-		var resp protocol.Response
-		if err := a.dec.Decode(&resp); err != nil {
+		if err != nil {
 			return errMsg{err}
 		}
 		if resp.Type == "error" {
 			// Fallback: try with session ID
-			a.enc.Encode(protocol.Request{
+			a.doRequest(protocol.Request{
 				Cmd:       "action",
 				Action:    action,
 				SessionID: sessionID,
 			})
-			a.dec.Decode(&resp)
 		}
 		return nil
 	}
@@ -84,12 +122,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
-		a.tree.SetSize(msg.Width-2, msg.Height) // account for border padding
+		a.tree.SetSize(msg.Width-2, msg.Height)
 		return a, nil
 
 	case sessionsMsg:
+		a.err = nil
 		a.tree.SetSessions([]model.Session(msg))
-		return a, a.subscribeUpdates()
+		return a, nil
+
+	case tickMsg:
+		return a, tea.Batch(a.fetchTree(), tickCmd())
 
 	case errMsg:
 		a.err = msg.err
@@ -120,17 +162,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	a.tree, cmd = a.tree.Update(msg)
 	return a, cmd
-}
-
-func (a *App) subscribeUpdates() tea.Cmd {
-	return func() tea.Msg {
-		a.enc.Encode(protocol.Request{Cmd: "subscribe"})
-		var resp protocol.Response
-		if err := a.dec.Decode(&resp); err != nil {
-			return errMsg{err}
-		}
-		return sessionsMsg(resp.Sessions)
-	}
 }
 
 func (a *App) View() string {

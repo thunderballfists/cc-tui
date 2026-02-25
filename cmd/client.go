@@ -17,13 +17,14 @@ func RunClient() {
 	home, _ := os.UserHomeDir()
 	sockPath := filepath.Join(home, ".claude", "cc-tui.sock")
 
+	// Probe connectivity; auto-start daemon if needed
 	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
 		// Auto-start daemon
 		daemonBin, _ := os.Executable()
 		daemonCmd := exec.Command(daemonBin, "serve")
 		daemonCmd.Start()
-		// Wait for socket
+		// Wait for socket to become available
 		for i := 0; i < 40; i++ {
 			time.Sleep(250 * time.Millisecond)
 			conn, err = net.Dial("unix", sockPath)
@@ -36,8 +37,7 @@ func RunClient() {
 			os.Exit(1)
 		}
 	}
-	defer conn.Close()
-
+	// NewApp closes this probe connection and reconnects per-request
 	app := tui.NewApp(conn)
 	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
