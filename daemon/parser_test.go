@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cc-tui/model"
 	"os"
 	"path/filepath"
 	"testing"
@@ -137,5 +138,27 @@ func TestLoadPlanReal(t *testing.T) {
 		} else {
 			t.Logf("%s: nil plan", filepath.Base(p))
 		}
+	}
+}
+
+func TestMatchStepCompletion(t *testing.T) {
+	steps := []model.PlanStep{
+		{Text: "Set up project structure"},
+		{Text: "Implement REST endpoints"},
+		{Text: "Write integration tests"},
+	}
+	tasks := []model.Task{
+		{Subject: "Set up the project structure and config", Status: "completed"},
+		{Subject: "Implement REST endpoints for users", Status: "in_progress"},
+	}
+	MatchStepCompletion(steps, tasks, nil)
+	if steps[0].Status != model.StepDone {
+		t.Errorf("step 0 = %v, want Done", steps[0].Status)
+	}
+	if steps[1].Status != model.StepWIP {
+		t.Errorf("step 1 = %v, want WIP", steps[1].Status)
+	}
+	if steps[2].Status != model.StepPending {
+		t.Errorf("step 2 = %v, want Pending", steps[2].Status)
 	}
 }

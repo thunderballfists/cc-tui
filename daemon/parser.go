@@ -437,3 +437,57 @@ func LoadPlan(planPath string) *model.Plan {
 		Steps: steps,
 	}
 }
+
+var wordRe = regexp.MustCompile(`\w{4,}`)
+
+func MatchStepCompletion(steps []model.PlanStep, tasks []model.Task, todos []model.Todo) {
+	type labeled struct {
+		words  map[string]bool
+		status string
+	}
+	var labels []labeled
+	for _, t := range tasks {
+		text := strings.ToLower(t.Subject)
+		words := make(map[string]bool)
+		for _, w := range wordRe.FindAllString(text, -1) {
+			words[w] = true
+		}
+		labels = append(labels, labeled{words, t.Status})
+	}
+	for _, t := range todos {
+		text := strings.ToLower(t.Content)
+		words := make(map[string]bool)
+		for _, w := range wordRe.FindAllString(text, -1) {
+			words[w] = true
+		}
+		labels = append(labels, labeled{words, t.Status})
+	}
+
+	for i := range steps {
+		stepWords := make(map[string]bool)
+		for _, w := range wordRe.FindAllString(strings.ToLower(steps[i].Text), -1) {
+			stepWords[w] = true
+		}
+		minMatch := 2
+		if len(stepWords) < 2 {
+			minMatch = len(stepWords)
+		}
+
+		for _, l := range labels {
+			overlap := 0
+			for w := range stepWords {
+				if l.words[w] {
+					overlap++
+				}
+			}
+			if overlap >= minMatch {
+				if l.status == "completed" {
+					steps[i].Status = model.StepDone
+					break
+				} else if l.status == "in_progress" {
+					steps[i].Status = model.StepWIP
+				}
+			}
+		}
+	}
+}
