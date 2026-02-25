@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"cc-tui/model"
 )
@@ -490,4 +491,80 @@ func MatchStepCompletion(steps []model.PlanStep, tasks []model.Task, todos []mod
 			}
 		}
 	}
+}
+
+var (
+	xmlTagRe  = regexp.MustCompile(`<[^>]*>?`)
+	toolIDRe  = regexp.MustCompile(`toolu_\w+`)
+	hexHashRe = regexp.MustCompile(`\b[a-f0-9]{7,}\b`)
+	spaceRe   = regexp.MustCompile(`\s+`)
+)
+
+func CleanMessage(msg string) string {
+	msg = xmlTagRe.ReplaceAllString(msg, "")
+	msg = toolIDRe.ReplaceAllString(msg, "")
+	msg = hexHashRe.ReplaceAllString(msg, "")
+	msg = spaceRe.ReplaceAllString(strings.TrimSpace(msg), " ")
+	if len(msg) <= 5 {
+		return ""
+	}
+	return msg
+}
+
+func dirName(path string) string {
+	home, _ := os.UserHomeDir()
+	if path == home || path == "~" {
+		return "~"
+	}
+	return filepath.Base(path)
+}
+
+type Dirs struct {
+	Projects string // ~/.claude/projects
+	Tasks    string // ~/.claude/tasks
+	Todos    string // ~/.claude/todos
+	Plans    string // ~/.claude/plans
+	History  string // ~/.claude/history.jsonl
+}
+
+func DefaultDirs() Dirs {
+	home, _ := os.UserHomeDir()
+	claude := filepath.Join(home, ".claude")
+	return Dirs{
+		Projects: filepath.Join(claude, "projects"),
+		Tasks:    filepath.Join(claude, "tasks"),
+		Todos:    filepath.Join(claude, "todos"),
+		Plans:    filepath.Join(claude, "plans"),
+		History:  filepath.Join(claude, "history.jsonl"),
+	}
+}
+
+func LoadFullSession(entry HistoryEntry, dirs Dirs) model.Session {
+	s := model.Session{
+		ID:         entry.ID,
+		Project:    entry.Project,
+		DirName:    dirName(entry.Project),
+		LastActive: time.UnixMilli(entry.LastTS),
+	}
+
+	uuid, jsonlPath := FindSessionUUID(entry.Project, dirs.Projects)
+	if jsonlPath != "" {
+		meta := LoadSessionMeta(jsonlPath)
+		s.Slug = meta.Slug
+		s.Title = meta.Title
+		s.GitBranch = meta.GitBranch
+		s.LastMsg = CleanMessage(meta.LastUserMsg)
+	}
+
+	if uuid != "" {
+		s.Tasks = LoadTasks(uuid, dirs.Tasks)
+		s.Todos = LoadTodos(uuid, dirs.Todos)
+	}
+	if s.Slug != "" {
+		s.Plan = LoadPlan(filepath.Join(dirs.Plans, s.Slug+".md"))
+		if s.Plan != nil {
+			MatchStepCompletion(s.Plan.Steps, s.Tasks, s.Todos)
+		}
+	}
+	return s
 }

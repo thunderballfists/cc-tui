@@ -162,3 +162,37 @@ func TestMatchStepCompletion(t *testing.T) {
 		t.Errorf("step 2 = %v, want Pending", steps[2].Status)
 	}
 }
+
+func TestCleanMessage(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"<system>Hello</system> world toolu_abc123", "Hello world"},
+		{"Fix the 8a3b4c5d commit issue", "Fix the commit issue"},
+		{"hi", ""},
+		{"Implement the REST API endpoints for the user service", "Implement the REST API endpoints for the user service"},
+	}
+	for _, tt := range tests {
+		got := CleanMessage(tt.input)
+		if got != tt.want {
+			t.Errorf("CleanMessage(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestLoadFullSessionReal(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+	dirs := DefaultDirs()
+	entries, _ := LoadHistory(dirs.History)
+	limit := 3
+	if len(entries) < limit {
+		limit = len(entries)
+	}
+	for _, e := range entries[:limit] {
+		s := LoadFullSession(e, dirs)
+		t.Logf("%s: title=%q plan=%v tasks=%d todos=%d",
+			s.DirName, s.Title, s.Plan != nil, len(s.Tasks), len(s.Todos))
+	}
+}
