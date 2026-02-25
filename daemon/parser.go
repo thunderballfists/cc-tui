@@ -262,3 +262,178 @@ func LoadTodos(sessionUUID, todosDir string) []model.Todo {
 	}
 	return allTodos
 }
+
+var (
+	stepHeadingRe    = regexp.MustCompile(`^##\s+Step\s+(\d+):\s*(.+)`)
+	tableRowRe       = regexp.MustCompile(`^\|\s*(\d+)\s*\|(.+)`)
+	numberedListRe   = regexp.MustCompile(`^(\d+)\.\s+(.+)`)
+	numberedHeadRe   = regexp.MustCompile(`^###\s+(\d+)\.\s+(.+)`)
+	boldRe           = regexp.MustCompile(`\*\*(.+?)\*\*`)
+	codeRe           = regexp.MustCompile("`(.+?)`")
+	strconv_atoi_err = regexp.MustCompile(`^(\d+)`)
+)
+
+func cleanStepText(text string) string {
+	text = boldRe.ReplaceAllString(text, "$1")
+	text = codeRe.ReplaceAllString(text, "$1")
+	return strings.TrimSpace(text)
+}
+
+func LoadPlan(planPath string) *model.Plan {
+	if planPath == "" {
+		return nil
+	}
+	data, err := os.ReadFile(planPath)
+	if err != nil {
+		return nil
+	}
+
+	content := string(data)
+	lines := strings.Split(content, "\n")
+	var title string
+	var steps []model.PlanStep
+
+	// Pass 1: look for ## Step N: headings
+	for _, line := range lines {
+		stripped := strings.TrimSpace(line)
+		if strings.HasPrefix(stripped, "# ") && !strings.HasPrefix(stripped, "## ") && title == "" {
+			title = strings.TrimSpace(stripped[2:])
+		}
+		m := stepHeadingRe.FindStringSubmatch(stripped)
+		if m != nil {
+			num := 0
+			if n := strconv_atoi_err.FindString(m[1]); n != "" {
+				for _, c := range n {
+					num = num*10 + int(c-'0')
+				}
+			}
+			steps = append(steps, model.PlanStep{
+				Num:  num,
+				Text: cleanStepText(m[2]),
+			})
+		}
+	}
+
+	// Pass 2: table rows and numbered lists under step-related headings
+	if len(steps) == 0 {
+		stepHeadings := []string{
+			"implementation order", "implementation steps", "build sequence",
+			"execution order", "steps", "files to create/modify", "files to modify",
+			"file:", "verification",
+		}
+		inSteps := false
+		for _, line := range lines {
+			stripped := strings.TrimSpace(line)
+			if strings.HasPrefix(stripped, "## ") {
+				heading := strings.TrimSpace(stripped[3:])
+				headingLower := strings.ToLower(heading)
+				inSteps = false
+				for _, h := range stepHeadings {
+					if strings.HasPrefix(headingLower, h) {
+						inSteps = true
+						break
+					}
+				}
+				continue
+			}
+			if !inSteps {
+				continue
+			}
+
+			// Table row: | N | desc |
+			m := tableRowRe.FindStringSubmatch(stripped)
+			if m != nil {
+				cols := strings.Split(m[2], "|")
+				var cleaned []string
+				for _, c := range cols {
+					c = strings.TrimSpace(c)
+					c = strings.Trim(c, "*")
+					if c != "" && c != "-" && !strings.HasPrefix(c, "---") {
+						cleaned = append(cleaned, c)
+					}
+				}
+				desc := ""
+				maxLen := 0
+				for _, c := range cleaned {
+					if len(c) > maxLen {
+						maxLen = len(c)
+						desc = c
+					}
+				}
+				if desc != "" {
+					num := 0
+					for _, c := range m[1] {
+						num = num*10 + int(c-'0')
+					}
+					steps = append(steps, model.PlanStep{
+						Num:  num,
+						Text: cleanStepText(desc),
+					})
+				}
+				continue
+			}
+
+			// Numbered list: N. text
+			m = numberedListRe.FindStringSubmatch(stripped)
+			if m != nil {
+				num := 0
+				for _, c := range m[1] {
+					num = num*10 + int(c-'0')
+				}
+				steps = append(steps, model.PlanStep{
+					Num:  num,
+					Text: cleanStepText(m[2]),
+				})
+				continue
+			}
+
+			// ### N. text
+			m = numberedHeadRe.FindStringSubmatch(stripped)
+			if m != nil {
+				num := 0
+				for _, c := range m[1] {
+					num = num*10 + int(c-'0')
+				}
+				steps = append(steps, model.PlanStep{
+					Num:  num,
+					Text: cleanStepText(m[2]),
+				})
+			}
+		}
+	}
+
+	// Pass 3: fallback to actionable ## headings
+	if len(steps) == 0 {
+		skip := map[string]bool{
+			"context": true, "approach": true, "key insight": true,
+			"key differences": true, "rendering mode": true, "verification": true,
+			"out of scope": true, "notes": true, "dependencies": true,
+			"environment variables": true, "success criteria": true,
+		}
+		num := 0
+		for _, line := range lines {
+			stripped := strings.TrimSpace(line)
+			if strings.HasPrefix(stripped, "## ") {
+				heading := strings.TrimSpace(stripped[3:])
+				headingLower := strings.ToLower(strings.TrimRight(heading, ":"))
+				if skip[headingLower] || strings.HasPrefix(headingLower, "key ") {
+					continue
+				}
+				num++
+				steps = append(steps, model.PlanStep{
+					Num:  num,
+					Text: cleanStepText(heading),
+				})
+			}
+		}
+	}
+
+	if title == "" && len(steps) == 0 {
+		return nil
+	}
+
+	return &model.Plan{
+		Title: title,
+		Steps: steps,
+	}
+}

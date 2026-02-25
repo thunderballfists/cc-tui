@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -76,5 +78,64 @@ func TestLoadTodos(t *testing.T) {
 	}
 	if todos[0].Status != "completed" {
 		t.Errorf("first todo status = %q, want completed", todos[0].Status)
+	}
+}
+
+func TestLoadPlan(t *testing.T) {
+	plan := LoadPlan("testdata/sample-plan.md")
+	if plan == nil {
+		t.Fatal("plan is nil")
+	}
+	if plan.Title != "Build a REST API Service" {
+		t.Errorf("title = %q, want 'Build a REST API Service'", plan.Title)
+	}
+	if len(plan.Steps) != 5 {
+		t.Fatalf("got %d steps, want 5", len(plan.Steps))
+	}
+	// Verify bold/code stripping
+	if plan.Steps[1].Text != "Implement database layer" {
+		t.Errorf("step 2 text = %q, want 'Implement database layer'", plan.Steps[1].Text)
+	}
+}
+
+func TestLoadPlanTable(t *testing.T) {
+	plan := LoadPlan("testdata/sample-plan-table.md")
+	if plan == nil {
+		t.Fatal("plan is nil")
+	}
+	if plan.Title != "Migration Plan" {
+		t.Errorf("title = %q", plan.Title)
+	}
+	if len(plan.Steps) != 4 {
+		t.Fatalf("got %d steps, want 4", len(plan.Steps))
+	}
+}
+
+func TestLoadPlanFallback(t *testing.T) {
+	plan := LoadPlan("testdata/sample-plan-fallback.md")
+	if plan == nil {
+		t.Fatal("plan is nil")
+	}
+	if plan.Title != "Refactor Authentication" {
+		t.Errorf("title = %q", plan.Title)
+	}
+	// Should skip "Context", "Key Insight", "Verification" and pick up 3 actionable headings
+	if len(plan.Steps) != 3 {
+		t.Fatalf("got %d steps, want 3: %+v", len(plan.Steps), plan.Steps)
+	}
+}
+
+func TestLoadPlanReal(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real file test")
+	}
+	plans, _ := filepath.Glob(os.ExpandEnv("$HOME/.claude/plans/*.md"))
+	for _, p := range plans {
+		plan := LoadPlan(p)
+		if plan != nil {
+			t.Logf("%s: title=%q steps=%d", filepath.Base(p), plan.Title, len(plan.Steps))
+		} else {
+			t.Logf("%s: nil plan", filepath.Base(p))
+		}
 	}
 }
