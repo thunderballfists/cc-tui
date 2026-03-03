@@ -1,0 +1,14 @@
+[Unit]
+Description=cc-tui daemon — watches Claude Code sessions
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=__INSTALL_DIR__/cc-tui serve
+Restart=always
+RestartSec=3
+StandardOutput=append:__HOME__/.claude/cc-tui-stdout.log
+StandardError=append:__HOME__/.claude/cc-tui-stderr.log
+
+[Install]
+WantedBy=default.target

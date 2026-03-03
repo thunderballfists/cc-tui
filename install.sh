@@ -3,30 +3,50 @@ set -e
 
 INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
 HOME_DIR="$HOME"
-PLIST_NAME="com.cc-tui.daemon"
-PLIST_SRC="$INSTALL_DIR/$PLIST_NAME.plist"
-PLIST_DST="$HOME_DIR/Library/LaunchAgents/$PLIST_NAME.plist"
 TOGGLE_SCRIPT="$INSTALL_DIR/cc-tui-toggle.sh"
 TMUX_CONF="$HOME_DIR/.tmux.conf"
+
+# Detect platform
+OS="$(uname -s)"
+IS_WSL=false
+if [ "$OS" = "Linux" ] && grep -qi microsoft /proc/version 2>/dev/null; then
+  IS_WSL=true
+fi
 
 echo "cc-tui installer"
 echo "================"
 echo ""
 echo "Install directory: $INSTALL_DIR"
+if [ "$OS" = "Darwin" ]; then
+  echo "Platform: macOS (launchd)"
+elif $IS_WSL; then
+  echo "Platform: WSL/Linux (systemd)"
+else
+  echo "Platform: Linux (systemd)"
+fi
 echo ""
 
 # --- Check dependencies ---
 
 if ! command -v go >/dev/null 2>&1; then
   echo "Error: Go is not installed."
-  echo "  Install with: brew install go"
+  if [ "$OS" = "Darwin" ]; then
+    echo "  Install with: brew install go"
+  else
+    echo "  Install with: sudo apt install golang-go"
+    echo "  Or: sudo snap install go --classic"
+  fi
   echo "  Or visit: https://go.dev/dl/"
   exit 1
 fi
 
 if ! command -v tmux >/dev/null 2>&1; then
   echo "Warning: tmux is not installed."
-  echo "  Install with: brew install tmux"
+  if [ "$OS" = "Darwin" ]; then
+    echo "  Install with: brew install tmux"
+  else
+    echo "  Install with: sudo apt install tmux"
+  fi
   echo "  cc-tui requires tmux to function."
   printf "Continue anyway? [y/N] "
   read -r reply
@@ -43,28 +63,62 @@ cd "$INSTALL_DIR"
 go build -o cc-tui .
 echo "  Built: $INSTALL_DIR/cc-tui"
 
+# --- Ensure log directory exists ---
+
+mkdir -p "$HOME_DIR/.claude"
+
 # --- Install daemon ---
 
 echo ""
-echo "Installing launchd daemon..."
 
-# Unload existing daemon if present
-if [ -f "$PLIST_DST" ]; then
-  launchctl unload "$PLIST_DST" 2>/dev/null || true
-  echo "  Unloaded existing daemon"
+if [ "$OS" = "Darwin" ]; then
+  # macOS: launchd
+  PLIST_NAME="com.cc-tui.daemon"
+  PLIST_SRC="$INSTALL_DIR/$PLIST_NAME.plist"
+  PLIST_DST="$HOME_DIR/Library/LaunchAgents/$PLIST_NAME.plist"
+
+  echo "Installing launchd daemon..."
+
+  if [ -f "$PLIST_DST" ]; then
+    launchctl unload "$PLIST_DST" 2>/dev/null || true
+    echo "  Unloaded existing daemon"
+  fi
+
+  mkdir -p "$HOME_DIR/Library/LaunchAgents"
+  sed -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
+      -e "s|__HOME__|$HOME_DIR|g" \
+      "$PLIST_SRC" > "$PLIST_DST"
+
+  launchctl load "$PLIST_DST"
+  echo "  Daemon installed and started"
+
+else
+  # Linux/WSL: systemd user service
+  SERVICE_SRC="$INSTALL_DIR/cc-tui-daemon.service"
+  SERVICE_DIR="$HOME_DIR/.config/systemd/user"
+  SERVICE_DST="$SERVICE_DIR/cc-tui-daemon.service"
+
+  echo "Installing systemd user service..."
+
+  mkdir -p "$SERVICE_DIR"
+  sed -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
+      -e "s|__HOME__|$HOME_DIR|g" \
+      "$SERVICE_SRC" > "$SERVICE_DST"
+
+  systemctl --user daemon-reload
+  systemctl --user enable cc-tui-daemon.service
+  systemctl --user restart cc-tui-daemon.service
+  echo "  Service installed and started"
+
+  # WSL: systemd may need lingering enabled
+  if $IS_WSL; then
+    if ! loginctl show-user "$USER" --property=Linger 2>/dev/null | grep -q "yes"; then
+      echo ""
+      echo "  Note: To keep the daemon running after you close your terminal,"
+      echo "  enable lingering with: sudo loginctl enable-linger $USER"
+    fi
+  fi
 fi
-
-# Create plist from template
-mkdir -p "$HOME_DIR/Library/LaunchAgents"
-sed -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
-    -e "s|__HOME__|$HOME_DIR|g" \
-    "$PLIST_SRC" > "$PLIST_DST"
-
-# Ensure log directory exists
-mkdir -p "$HOME_DIR/.claude"
-
-launchctl load "$PLIST_DST"
-echo "  Daemon installed and started"
 
 # --- Toggle script ---
 
@@ -93,4 +147,4 @@ echo "Usage:"
 echo "  In tmux, press <prefix> s to toggle the session panel"
 echo "  Or run: $INSTALL_DIR/cc-tui"
 echo ""
-echo "See README.md for iTerm2 keybindings and configuration tips."
+echo "See README.md for keybindings and configuration tips."
