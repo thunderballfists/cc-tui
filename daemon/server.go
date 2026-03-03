@@ -20,7 +20,6 @@ func NewServer(cache *Cache, sockPath string) *Server {
 }
 
 func (s *Server) Start() error {
-	// Clean up stale socket
 	os.Remove(s.sockPath)
 
 	ln, err := net.Listen("unix", s.sockPath)
@@ -30,8 +29,6 @@ func (s *Server) Start() error {
 	s.listener = ln
 
 	go s.acceptLoop()
-
-	// Periodic active pane polling
 	go s.pollActivePanes()
 
 	return nil
@@ -60,17 +57,19 @@ func (s *Server) handleConn(conn net.Conn) {
 
 		switch req.Cmd {
 		case "tree":
-			sessions := s.cache.Sessions()
+			groups := s.cache.Groups()
 			enc.Encode(protocol.Response{
-				Type:     "snapshot",
-				Sessions: sessions,
+				Type:   "snapshot",
+				Groups: groups,
 			})
 
 		case "action":
 			s.handleAction(req, enc)
 
+		case "conversation":
+			s.handleConversation(req, enc)
+
 		case "subscribe":
-			// Hold connection open, send updates when cache changes
 			s.streamUpdates(conn, enc)
 			return
 		}
@@ -78,41 +77,101 @@ func (s *Server) handleConn(conn net.Conn) {
 }
 
 func (s *Server) handleAction(req protocol.Request, enc *json.Encoder) {
-	sessions := s.cache.Sessions()
-	var target *Session
-	for i := range sessions {
-		if sessions[i].ID == req.SessionID || sessions[i].Project == req.SessionID {
-			target = &Session{
-				ID:        sessions[i].ID,
-				Project:   sessions[i].Project,
-				Active:    sessions[i].Active,
-				PaneLabel: sessions[i].PaneLabel,
+	groups := s.cache.Groups()
+
+	// Find the target session/project
+	var targetID, targetProject, targetPaneLabel string
+	var targetActive bool
+
+	for _, g := range groups {
+		// Match by session ID first (specific snapshot)
+		for _, sess := range g.Sessions {
+			if sess.ID == req.SessionID {
+				targetID = sess.ID
+				targetProject = g.Project
+				targetActive = g.Active
+				targetPaneLabel = g.PaneLabel
+				break
+			}
+		}
+		if targetProject != "" {
+			break
+		}
+		// Fallback: match by project path (uses latest session)
+		if g.Project == req.SessionID {
+			targetProject = g.Project
+			targetActive = g.Active
+			targetPaneLabel = g.PaneLabel
+			if len(g.Sessions) > 0 {
+				targetID = g.Sessions[0].ID
 			}
 			break
 		}
 	}
-	if target == nil {
+
+	if targetProject == "" {
 		enc.Encode(protocol.Response{Type: "error", Error: "session not found"})
 		return
 	}
 
-	dir := target.Project
-	claudeCmd := "claude --dangerously-skip-permissions"
-
+	// Use a login shell so claude is found via user's PATH (nvm, etc.)
 	switch req.Action {
 	case "open":
-		if target.Active {
-			TmuxSwitchToPane(target.PaneLabel)
+		if targetActive {
+			TmuxSwitchToPane(targetPaneLabel)
+		} else if targetID != "" {
+			TmuxSplitShell(targetProject, "claude --dangerously-skip-permissions -r "+targetID)
 		} else {
-			TmuxSplitPane(dir, claudeCmd+" -r '"+target.ID+"'")
+			TmuxSplitShell(targetProject, "claude --dangerously-skip-permissions")
 		}
 	case "window":
-		TmuxNewWindow(dir, claudeCmd+" -r '"+target.ID+"'")
+		if targetID != "" {
+			TmuxNewWindowShell(targetProject, "claude --dangerously-skip-permissions -r "+targetID)
+		} else {
+			TmuxNewWindowShell(targetProject, "claude --dangerously-skip-permissions")
+		}
 	case "new":
-		TmuxSplitPane(dir, claudeCmd)
+		TmuxSplitShell(targetProject, "claude --dangerously-skip-permissions")
 	}
 
 	enc.Encode(protocol.Response{Type: "ok"})
+}
+
+func (s *Server) handleConversation(req protocol.Request, enc *json.Encoder) {
+	groups := s.cache.Groups()
+	dirs := s.cache.dirs
+
+	// Find the session's JSONL path
+	var jsonlPath string
+	for _, g := range groups {
+		// Match by session ID
+		for _, sess := range g.Sessions {
+			if sess.ID == req.SessionID {
+				encoded := EncodeProjectPath(g.Project)
+				jsonlPath = dirs.Projects + "/" + encoded + "/" + sess.ID + ".jsonl"
+				break
+			}
+		}
+		// Match by project path (use latest session)
+		if jsonlPath == "" && g.Project == req.SessionID && len(g.Sessions) > 0 {
+			encoded := EncodeProjectPath(g.Project)
+			jsonlPath = dirs.Projects + "/" + encoded + "/" + g.Sessions[0].ID + ".jsonl"
+		}
+		if jsonlPath != "" {
+			break
+		}
+	}
+
+	if jsonlPath == "" {
+		enc.Encode(protocol.Response{Type: "error", Error: "session not found"})
+		return
+	}
+
+	msgs := LoadConversation(jsonlPath)
+	enc.Encode(protocol.Response{
+		Type:         "conversation",
+		Conversation: msgs,
+	})
 }
 
 func (s *Server) pollActivePanes() {
@@ -125,16 +184,15 @@ func (s *Server) pollActivePanes() {
 }
 
 func (s *Server) streamUpdates(conn net.Conn, enc *json.Encoder) {
-	// Simple polling approach: send snapshot every 2s
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		sessions := s.cache.Sessions()
+		groups := s.cache.Groups()
 		if err := enc.Encode(protocol.Response{
-			Type:     "update",
-			Sessions: sessions,
+			Type:   "update",
+			Groups: groups,
 		}); err != nil {
-			return // client disconnected
+			return
 		}
 	}
 }
@@ -144,12 +202,4 @@ func (s *Server) Close() {
 		s.listener.Close()
 	}
 	os.Remove(s.sockPath)
-}
-
-// Session is a helper for action handling
-type Session struct {
-	ID        string
-	Project   string
-	Active    bool
-	PaneLabel string
 }

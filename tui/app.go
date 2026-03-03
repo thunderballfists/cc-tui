@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,36 +13,54 @@ import (
 	"cc-tui/protocol"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
 type App struct {
-	tree     TreeModel
-	sockPath string
-	mu       sync.Mutex
-	width    int
-	height   int
-	showHelp bool
-	err      error
+	tree        TreeModel
+	groups      []model.ProjectGroup
+	sockPath    string
+	mu          sync.Mutex
+	width       int
+	height      int
+	showHelp    bool
+	showPreview bool
+	preview     PreviewState
+	filtering   bool
+	filter      textinput.Model
+	filterText  string
+	err            error
+	expandState    map[string]bool
+	tick           int
+	lastActionTime time.Time
 }
 
-type sessionsMsg []model.Session
+type convMsg []model.ConvMessage
+
+type groupsMsg []model.ProjectGroup
 type errMsg struct{ err error }
 type tickMsg time.Time
 
 func (e errMsg) Error() string { return e.err.Error() }
 
 func NewApp(conn net.Conn) *App {
-	// We close the initial probe connection; we'll connect fresh for each request
 	conn.Close()
 
 	home, _ := os.UserHomeDir()
 	sockPath := filepath.Join(home, ".claude", "cc-tui.sock")
 
+	fi := textinput.New()
+	fi.Prompt = "/ "
+	fi.CharLimit = 40
+
 	return &App{
-		tree:     NewTreeModel(),
-		sockPath: sockPath,
+		tree:        NewTreeModel(),
+		sockPath:    sockPath,
+		expandState: make(map[string]bool),
+		showPreview: false,
+		filter:      fi,
 	}
 }
 
@@ -91,30 +110,68 @@ func (a *App) fetchTree() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		return sessionsMsg(resp.Sessions)
+		return groupsMsg(resp.Groups)
+	}
+}
+
+func (a *App) fetchConversation(sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := a.doRequest(protocol.Request{Cmd: "conversation", SessionID: sessionID})
+		if err != nil {
+			return errMsg{err}
+		}
+		return convMsg(resp.Conversation)
 	}
 }
 
 func (a *App) sendAction(action, sessionID, project string) tea.Cmd {
 	return func() tea.Msg {
+		// Use session ID if available (specific snapshot), fall back to project path
+		targetID := sessionID
+		if targetID == "" {
+			targetID = project
+		}
 		resp, err := a.doRequest(protocol.Request{
 			Cmd:       "action",
 			Action:    action,
-			SessionID: project,
+			SessionID: targetID,
 		})
 		if err != nil {
 			return errMsg{err}
 		}
-		if resp.Type == "error" {
-			// Fallback: try with session ID
+		if resp.Type == "error" && targetID != project {
 			a.doRequest(protocol.Request{
 				Cmd:       "action",
 				Action:    action,
-				SessionID: sessionID,
+				SessionID: project,
 			})
 		}
 		return nil
 	}
+}
+
+func (a *App) applyFilter(groups []model.ProjectGroup) []model.ProjectGroup {
+	if a.filterText == "" {
+		return groups
+	}
+	query := strings.ToLower(a.filterText)
+	var filtered []model.ProjectGroup
+	for _, g := range groups {
+		if strings.Contains(strings.ToLower(g.DirName), query) ||
+			strings.Contains(strings.ToLower(g.Project), query) {
+			filtered = append(filtered, g)
+			continue
+		}
+		// Check session titles/messages
+		for _, s := range g.Sessions {
+			if strings.Contains(strings.ToLower(s.Title), query) ||
+				strings.Contains(strings.ToLower(s.LastMsg), query) {
+				filtered = append(filtered, g)
+				break
+			}
+		}
+	}
+	return filtered
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -123,32 +180,162 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 		a.tree.SetSize(msg.Width-2, msg.Height)
+		a.preview.SetSize(msg.Width, msg.Height)
 		return a, nil
 
-	case sessionsMsg:
+	case groupsMsg:
 		a.err = nil
-		a.tree.SetSessions([]model.Session(msg))
+		a.groups = []model.ProjectGroup(msg)
+		filtered := a.applyFilter(a.groups)
+		a.tree.SetGroups(filtered, a.expandState)
 		return a, nil
 
 	case tickMsg:
+		a.tick++
 		return a, tea.Batch(a.fetchTree(), tickCmd())
+
+	case convMsg:
+		a.preview.SetMessages([]model.ConvMessage(msg))
+		return a, nil
 
 	case errMsg:
 		a.err = msg.err
 		return a, nil
 
 	case ActionMsg:
+		// Debounce — ignore actions within 1s of last one
+		if time.Since(a.lastActionTime) < time.Second {
+			return a, nil
+		}
+		a.lastActionTime = time.Now()
 		return a, a.sendAction(msg.Action, msg.SessionID, msg.Project)
 
 	case RefreshMsg:
 		return a, a.fetchTree()
 
+	case tea.MouseMsg:
+		if a.showPreview {
+			switch msg.Type {
+			case tea.MouseWheelUp:
+				a.preview.HandleMouse(msg.Y, true, true)
+			case tea.MouseWheelDown:
+				a.preview.HandleMouse(msg.Y, true, false)
+			case tea.MouseLeft:
+				if msg.X >= a.width-5 {
+					a.preview.dragging = true
+					a.preview.HandleMouse(msg.Y, false, false)
+				}
+			case tea.MouseMotion:
+				if a.preview.dragging {
+					a.preview.HandleMouse(msg.Y, false, false)
+				}
+			case tea.MouseRelease:
+				a.preview.dragging = false
+			}
+			return a, nil
+		}
+
 	case tea.KeyMsg:
-		// Global keys
+		// Help overlay dismissal
 		if a.showHelp {
 			a.showHelp = false
 			return a, nil
 		}
+
+		// Preview overlay
+		if a.showPreview {
+			// Search mode within preview
+			if a.preview.searching {
+				switch msg.String() {
+				case "enter", "esc":
+					a.preview.searching = false
+					if msg.String() == "esc" {
+						a.preview.search = ""
+					}
+					return a, nil
+				case "backspace":
+					if len(a.preview.search) > 0 {
+						a.preview.search = a.preview.search[:len(a.preview.search)-1]
+						a.preview.scroll = 0
+					}
+					return a, nil
+				default:
+					if len(msg.String()) == 1 {
+						a.preview.search += msg.String()
+						a.preview.scroll = 0
+					}
+					return a, nil
+				}
+			}
+
+			switch msg.String() {
+			case "p", "esc":
+				a.showPreview = false
+				return a, nil
+			case "q":
+				return a, tea.Quit
+			case "j", "down":
+				a.preview.ScrollDown(3)
+				return a, nil
+			case "k", "up":
+				a.preview.ScrollUp(3)
+				return a, nil
+			case "d":
+				a.preview.ScrollDown(a.height / 2)
+				return a, nil
+			case "u":
+				a.preview.ScrollUp(a.height / 2)
+				return a, nil
+			case "g", "home":
+				a.preview.scroll = 0
+				return a, nil
+			case "G", "end":
+				a.preview.ScrollDown(99999)
+				return a, nil
+			case " ":
+				a.preview.ScrollDown(a.height / 2)
+				return a, nil
+			case "/":
+				a.preview.searching = true
+				a.preview.search = ""
+				return a, nil
+			case "enter":
+				var cmd tea.Cmd
+				a.tree, cmd = a.tree.Update(msg)
+				a.tree.SaveExpandState(a.expandState)
+				a.showPreview = false
+				return a, cmd
+			}
+			return a, nil
+		}
+
+		// Filter mode
+		if a.filtering {
+			switch msg.String() {
+			case "enter", "esc":
+				a.filtering = false
+				a.filter.Blur()
+				if msg.String() == "esc" {
+					a.filterText = ""
+					a.filter.SetValue("")
+				} else {
+					a.filterText = a.filter.Value()
+				}
+				filtered := a.applyFilter(a.groups)
+				a.tree.SetGroups(filtered, a.expandState)
+				return a, nil
+			default:
+				var cmd tea.Cmd
+				a.filter, cmd = a.filter.Update(msg)
+				// Live filter as you type
+				a.filterText = a.filter.Value()
+				filtered := a.applyFilter(a.groups)
+				a.tree.SetGroups(filtered, a.expandState)
+				return a, cmd
+			}
+		}
+
+		// Global keys
 		if key.Matches(msg, a.tree.keys.Help) {
 			a.showHelp = !a.showHelp
 			return a, nil
@@ -156,11 +343,32 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, a.tree.keys.Quit) {
 			return a, tea.Quit
 		}
+		if key.Matches(msg, a.tree.keys.Filter) {
+			a.filtering = true
+			a.filter.Focus()
+			return a, a.filter.Cursor.BlinkCmd()
+		}
+		// 'p' opens preview overlay
+		if msg.String() == "p" {
+			g := a.tree.findGroupForCursor()
+			if g != nil {
+				sid, _ := a.tree.findTargetForCursor()
+				a.showPreview = true
+				a.preview.SetGroup(g)
+				a.preview.SetSession(sid)
+				a.preview.SetSize(a.width, a.height)
+				if !a.preview.loaded && sid != "" {
+					return a, a.fetchConversation(sid)
+				}
+			}
+			return a, nil
+		}
 	}
 
 	// Delegate to tree model
 	var cmd tea.Cmd
 	a.tree, cmd = a.tree.Update(msg)
+	a.tree.SaveExpandState(a.expandState)
 	return a, cmd
 }
 
@@ -169,23 +377,39 @@ func (a *App) View() string {
 		return RenderHelpOverlay(a.tree.keys, a.width, a.height)
 	}
 
-	header := HeaderStyle.Render(" CC Sessions ")
-	tree := a.tree.View()
-
-	// Help footer
-	helpKeys := a.tree.keys.ShortHelp()
-	var helpParts []string
-	for _, k := range helpKeys {
-		h := k.Help()
-		helpParts = append(helpParts, h.Key+" "+h.Desc)
-	}
-	help := HelpStyle.Render("  " + lipgloss.JoinHorizontal(lipgloss.Left, joinHelp(helpParts)...) + "  ? help")
-
-	if a.err != nil {
-		header += " " + lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(a.err.Error())
+	// Preview overlay
+	if a.showPreview {
+		return a.preview.View()
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, tree, help)
+	// Header
+	header := renderBanner(a.width, a.groups, a.filterText, a.err != nil, a.tick)
+
+	// Footer
+	var footer string
+	if a.filtering {
+		footer = a.filter.View()
+	} else {
+		footer = HelpStyle.Render("  ↑↓ navigate  ←→ expand  ⏎ open  n new  / filter  p preview  ? help  q quit")
+	}
+
+	contentHeight := a.height - 2 // header + footer
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+
+	treeContent := a.tree.View()
+	return lipgloss.JoinVertical(lipgloss.Left, header, treeContent, footer)
+}
+
+func renderPreviewBar(done, total, barLen int) string {
+	if total == 0 {
+		return ""
+	}
+	filled := done * barLen / total
+	empty := barLen - filled
+	return ProgressFull.Render(strings.Repeat("█", filled)) +
+		ProgressEmpty.Render(strings.Repeat("░", empty))
 }
 
 func joinHelp(parts []string) []string {

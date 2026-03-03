@@ -41,15 +41,45 @@ func NewTreeModel() TreeModel {
 	}
 }
 
-func (m *TreeModel) SetSessions(sessions []model.Session) {
-	m.roots = BuildTree(sessions)
+func (m *TreeModel) SetGroups(groups []model.ProjectGroup, expandState map[string]bool) {
+	m.roots = BuildTree(groups)
+
+	// Apply persisted expand state (overrides BuildTree defaults)
+	for _, root := range m.roots {
+		if root.Kind == NodeProject && root.Group != nil {
+			key := "p:" + root.Group.Project
+			if expanded, ok := expandState[key]; ok {
+				root.Expanded = expanded
+			}
+			for _, child := range root.Children {
+				ckey := key + "/" + child.Label
+				if expanded, ok := expandState[ckey]; ok {
+					child.Expanded = expanded
+				}
+			}
+		}
+	}
+
 	m.rebuildVisible()
-	// Clamp cursor
 	if m.cursor >= len(m.visible) {
 		m.cursor = len(m.visible) - 1
 	}
 	if m.cursor < 0 {
 		m.cursor = 0
+	}
+}
+
+// SaveExpandState captures current expand state into the provided map.
+func (m *TreeModel) SaveExpandState(state map[string]bool) {
+	for _, root := range m.roots {
+		if root.Kind == NodeProject && root.Group != nil {
+			key := "p:" + root.Group.Project
+			state[key] = root.Expanded
+			for _, child := range root.Children {
+				ckey := key + "/" + child.Label
+				state[ckey] = child.Expanded
+			}
+		}
 	}
 }
 
@@ -146,7 +176,7 @@ func (m TreeModel) Update(msg tea.Msg) (TreeModel, tea.Cmd) {
 				if node.Expanded && len(node.Children) > 0 {
 					node.Expanded = false
 					m.rebuildVisible()
-				} else if node.Kind != NodeSession {
+				} else if node.Kind != NodeProject {
 					// Jump to parent
 					m.jumpToParent()
 				}
@@ -197,36 +227,66 @@ func (m *TreeModel) jumpToParent() {
 	}
 }
 
-func (m *TreeModel) findSessionForCursor() *model.Session {
+func (m *TreeModel) findGroupForCursor() *model.ProjectGroup {
 	if m.cursor >= len(m.visible) {
 		return nil
 	}
 	node := m.visible[m.cursor]
-
-	// If it's a session node, use it directly
-	if node.Kind == NodeSession && node.Session != nil {
-		return node.Session
+	if node.Kind == NodeProject && node.Group != nil {
+		return node.Group
 	}
-
-	// Walk up to find parent session
+	// Walk up to find parent project
 	for i := m.cursor - 1; i >= 0; i-- {
-		if m.visible[i].Kind == NodeSession && m.visible[i].Session != nil {
-			return m.visible[i].Session
+		if m.visible[i].Kind == NodeProject && m.visible[i].Group != nil {
+			return m.visible[i].Group
 		}
 	}
 	return nil
 }
 
+func (m *TreeModel) findTargetForCursor() (sessionID, project string) {
+	if m.cursor >= len(m.visible) {
+		return "", ""
+	}
+	node := m.visible[m.cursor]
+
+	// If it's a snapshot, use that specific session
+	if node.Kind == NodeSnapshot && node.Session != nil {
+		return node.Session.ID, node.Session.Project
+	}
+
+	// If it's a project node, use the latest session
+	if node.Kind == NodeProject && node.Group != nil {
+		g := node.Group
+		if len(g.Sessions) > 0 {
+			return g.Sessions[0].ID, g.Project
+		}
+		return "", g.Project
+	}
+
+	// Walk up to find parent project
+	for i := m.cursor - 1; i >= 0; i-- {
+		if m.visible[i].Kind == NodeProject && m.visible[i].Group != nil {
+			g := m.visible[i].Group
+			if len(g.Sessions) > 0 {
+				return g.Sessions[0].ID, g.Project
+			}
+			return "", g.Project
+		}
+	}
+	return "", ""
+}
+
 func (m *TreeModel) openAction(action string) tea.Cmd {
-	s := m.findSessionForCursor()
-	if s == nil {
+	sessionID, project := m.findTargetForCursor()
+	if project == "" {
 		return nil
 	}
 	return func() tea.Msg {
 		return ActionMsg{
 			Action:    action,
-			SessionID: s.ID,
-			Project:   s.Project,
+			SessionID: sessionID,
+			Project:   project,
 		}
 	}
 }

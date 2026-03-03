@@ -11,12 +11,12 @@ func TestCacheReloadReal(t *testing.T) {
 	if err := cache.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	sessions := cache.Sessions()
-	t.Logf("loaded %d sessions", len(sessions))
-	for _, s := range sessions {
-		t.Logf("  %s: %s (active=%v)", s.DirName, s.Title, s.Active)
+	groups := cache.Groups()
+	t.Logf("loaded %d project groups", len(groups))
+	for _, g := range groups {
+		t.Logf("  %s: %d sessions (active=%v)", g.DirName, len(g.Sessions), g.Active)
 	}
-	if len(sessions) == 0 {
-		t.Error("expected at least 1 session")
+	if len(groups) == 0 {
+		t.Error("expected at least 1 project group")
 	}
 }

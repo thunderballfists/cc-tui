@@ -29,7 +29,7 @@ func RunServe() {
 	if err := cache.Reload(); err != nil {
 		log.Fatalf("initial load failed: %v", err)
 	}
-	log.Printf("loaded %d sessions", len(cache.Sessions()))
+	log.Printf("loaded %d project groups", len(cache.Groups()))
 
 	watcher, err := daemon.NewWatcher(cache, dirs)
 	if err != nil {

@@ -194,12 +194,16 @@ func LoadSessionMeta(jsonlPath string) SessionMeta {
 			if msg != nil {
 				content, _ := msg["content"].(string)
 				if content != "" && content != "exit" && content != "/exit" && content != "/compact" {
-					if len(content) > 120 {
-						content = content[:120]
+					if len(content) > 200 {
+						content = content[:200]
 					}
-					meta.LastUserMsg = content
-					if branch, ok := d["gitBranch"].(string); ok && branch != "" {
-						meta.GitBranch = branch
+					// Clean NOW so we skip junk messages (XML-wrapped compact preambles etc.)
+					cleaned := CleanMessage(content)
+					if cleaned != "" {
+						meta.LastUserMsg = cleaned
+						if branch, ok := d["gitBranch"].(string); ok && branch != "" {
+							meta.GitBranch = branch
+						}
 					}
 				}
 			}
@@ -500,6 +504,13 @@ var (
 	spaceRe   = regexp.MustCompile(`\s+`)
 )
 
+// Unhelpful message prefixes to skip entirely
+var skipPrefixes = []string{
+	"This session is being continued from a previous conversation",
+	"Failed to fork",
+	"/compact",
+}
+
 func CleanMessage(msg string) string {
 	msg = xmlTagRe.ReplaceAllString(msg, "")
 	msg = toolIDRe.ReplaceAllString(msg, "")
@@ -508,7 +519,29 @@ func CleanMessage(msg string) string {
 	if len(msg) <= 5 {
 		return ""
 	}
+	for _, prefix := range skipPrefixes {
+		if strings.HasPrefix(msg, prefix) {
+			return ""
+		}
+	}
 	return msg
+}
+
+// CleanTitle strips fork suffixes and other noise from custom titles.
+func CleanTitle(title string) string {
+	if title == "" {
+		return ""
+	}
+	// Strip "(Fork)", "(Fork 2)", etc.
+	title = regexp.MustCompile(`\s*\(Fork\s*\d*\)\s*$`).ReplaceAllString(title, "")
+	// Skip titles that are just auto-generated noise
+	if strings.HasPrefix(title, "This session") {
+		return ""
+	}
+	if strings.HasPrefix(title, "Failed to") {
+		return ""
+	}
+	return strings.TrimSpace(title)
 }
 
 func dirName(path string) string {
@@ -517,6 +550,10 @@ func dirName(path string) string {
 		return "~"
 	}
 	return filepath.Base(path)
+}
+
+func timeFromMillis(ms int64) time.Time {
+	return time.UnixMilli(ms)
 }
 
 type Dirs struct {
@@ -551,7 +588,7 @@ func LoadFullSession(entry HistoryEntry, dirs Dirs) model.Session {
 	if jsonlPath != "" {
 		meta := LoadSessionMeta(jsonlPath)
 		s.Slug = meta.Slug
-		s.Title = meta.Title
+		s.Title = CleanTitle(meta.Title)
 		s.GitBranch = meta.GitBranch
 		s.LastMsg = CleanMessage(meta.LastUserMsg)
 	}

@@ -1,15 +1,18 @@
 package daemon
 
 import (
-	"cc-tui/model"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
+
+	"cc-tui/model"
 )
 
 type Cache struct {
-	mu       sync.RWMutex
-	sessions []model.Session
-	dirs     Dirs
+	mu     sync.RWMutex
+	groups []model.ProjectGroup
+	dirs   Dirs
 }
 
 func NewCache(dirs Dirs) *Cache {
@@ -22,49 +25,111 @@ func (c *Cache) Reload() error {
 		return err
 	}
 
-	sessions := make([]model.Session, 0, len(entries))
+	// Group entries by project
+	byProject := make(map[string][]HistoryEntry)
+	var projectOrder []string
 	for _, e := range entries {
-		s := LoadFullSession(e, c.dirs)
-		sessions = append(sessions, s)
+		if e.Project == "" {
+			continue
+		}
+		if _, seen := byProject[e.Project]; !seen {
+			projectOrder = append(projectOrder, e.Project)
+		}
+		byProject[e.Project] = append(byProject[e.Project], e)
 	}
 
-	sort.Slice(sessions, func(i, j int) bool {
-		if sessions[i].Active != sessions[j].Active {
-			return sessions[i].Active
+	groups := make([]model.ProjectGroup, 0, len(byProject))
+	for _, proj := range projectOrder {
+		ents := byProject[proj]
+		// Sort snapshots by time desc (most recent first)
+		sort.Slice(ents, func(i, j int) bool {
+			return ents[i].LastTS > ents[j].LastTS
+		})
+
+		// Load full data only for the most recent snapshot
+		latest := LoadFullSession(ents[0], c.dirs)
+
+		// Build lightweight snapshots for the rest — use each session's own JSONL
+		// Skip sessions whose JSONL file is missing (deleted/never persisted)
+		encoded := EncodeProjectPath(proj)
+		sessions := make([]model.Session, 0, len(ents))
+		sessions = append(sessions, latest)
+		for _, e := range ents[1:] {
+			jsonlPath := filepath.Join(c.dirs.Projects, encoded, e.ID+".jsonl")
+			if _, err := os.Stat(jsonlPath); err != nil {
+				continue // JSONL gone — skip this snapshot
+			}
+			meta := LoadSessionMeta(jsonlPath)
+			s := model.Session{
+				ID:         e.ID,
+				Project:    e.Project,
+				DirName:    dirName(e.Project),
+				LastActive: timeFromMillis(e.LastTS),
+				Slug:       meta.Slug,
+				Title:      CleanTitle(meta.Title),
+				GitBranch:  meta.GitBranch,
+				LastMsg:    CleanMessage(meta.LastUserMsg),
+			}
+			sessions = append(sessions, s)
 		}
-		return sessions[i].LastActive.After(sessions[j].LastActive)
+
+		g := model.ProjectGroup{
+			Project:    proj,
+			DirName:    latest.DirName,
+			Active:     latest.Active,
+			PaneID:     latest.PaneID,
+			PaneLabel:  latest.PaneLabel,
+			LastActive: latest.LastActive,
+			Sessions:   sessions,
+		}
+		groups = append(groups, g)
+	}
+
+	// Sort: active first, then by most recent
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].Active != groups[j].Active {
+			return groups[i].Active
+		}
+		return groups[i].LastActive.After(groups[j].LastActive)
 	})
 
-	if len(sessions) > 25 {
-		sessions = sessions[:25]
+	if len(groups) > 25 {
+		groups = groups[:25]
 	}
 
 	c.mu.Lock()
-	c.sessions = sessions
+	c.groups = groups
 	c.mu.Unlock()
 	return nil
 }
 
-func (c *Cache) Sessions() []model.Session {
+func (c *Cache) Groups() []model.ProjectGroup {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	result := make([]model.Session, len(c.sessions))
-	copy(result, c.sessions)
+	result := make([]model.ProjectGroup, len(c.groups))
+	copy(result, c.groups)
 	return result
 }
 
 func (c *Cache) UpdateActiveStatus(activePanes map[string]PaneInfo) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for i := range c.sessions {
-		info, ok := activePanes[c.sessions[i].Project]
-		c.sessions[i].Active = ok
-		if ok {
-			c.sessions[i].PaneID = info.PaneID
-			c.sessions[i].PaneLabel = info.PaneLabel
-		} else {
-			c.sessions[i].PaneID = ""
-			c.sessions[i].PaneLabel = ""
+	for i := range c.groups {
+		info, ok := activePanes[c.groups[i].Project]
+		c.groups[i].Active = ok
+		if len(c.groups[i].Sessions) > 0 {
+			c.groups[i].Sessions[0].Active = ok
+			if ok {
+				c.groups[i].Sessions[0].PaneID = info.PaneID
+				c.groups[i].Sessions[0].PaneLabel = info.PaneLabel
+				c.groups[i].PaneID = info.PaneID
+				c.groups[i].PaneLabel = info.PaneLabel
+			} else {
+				c.groups[i].Sessions[0].PaneID = ""
+				c.groups[i].Sessions[0].PaneLabel = ""
+				c.groups[i].PaneID = ""
+				c.groups[i].PaneLabel = ""
+			}
 		}
 	}
 }
