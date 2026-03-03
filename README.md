@@ -198,4 +198,4 @@ rm -rf ~/.config/tmux/cc-tui
 
 ## License
 
-MIT
+GPL-3.0 — see [LICENSE](LICENSE) for details.
