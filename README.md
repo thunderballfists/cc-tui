@@ -6,17 +6,7 @@ Monitors `~/.claude/` for active and historical conversations, displays them in 
 
 > **Pre-release** — works well for daily use but expect rough edges.
 
-```
- ⚡CC Sessions                          ● 2 active ◆ 8 proj ◆ 23 sess
- ↓ 📁 my-api ● 3m ago                          feature/auth ── ✓6/8
-     → Plan: Implement JWT auth                     ✓✓✓⚙□□□□
-     → Tasks (4)                                    ████░░░░
-     ↓ Sessions (3)
-         2026-03-03 10:42  "Add token refresh"
-         2026-03-02 15:10  "Set up middleware"
-         2026-03-01 09:30  "Initial auth design"
- → 📁 frontend ○ 2h ago                                    main
-```
+![cc-tui screenshot](docs/screenshot.png)
 
 ## What it does
 
