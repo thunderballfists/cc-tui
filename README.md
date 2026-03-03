@@ -6,7 +6,7 @@ Monitors `~/.claude/` for active and historical conversations, displays them in 
 
 > **Pre-release** — works well for daily use but expect rough edges.
 
-![cc-tui screenshot](docs/screenshot.png)
+![cc-tui screenshot](cc-tui.png)
 
 ## What it does
 
