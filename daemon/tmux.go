@@ -7,12 +7,32 @@ import (
 	"strings"
 )
 
-// Use absolute paths — daemon runs under launchd with minimal PATH
+// Use absolute paths — daemon runs under launchd with minimal PATH.
+// tmux location differs between Intel (/usr/local) and Apple Silicon (/opt/homebrew),
+// so resolve it at startup.
 const (
-	tmuxBin  = "/usr/local/bin/tmux"
 	pgrepBin = "/usr/bin/pgrep"
 	psBin    = "/bin/ps"
 )
+
+var tmuxBin = resolveTmuxBin()
+
+func resolveTmuxBin() string {
+	candidates := []string{
+		"/opt/homebrew/bin/tmux", // Apple Silicon Homebrew
+		"/usr/local/bin/tmux",    // Intel Homebrew / Linux /usr/local
+		"/usr/bin/tmux",          // system package manager
+	}
+	for _, p := range candidates {
+		if _, err := exec.LookPath(p); err == nil {
+			return p
+		}
+	}
+	if p, err := exec.LookPath("tmux"); err == nil {
+		return p
+	}
+	return "tmux"
+}
 
 type PaneInfo struct {
 	PaneID    string
