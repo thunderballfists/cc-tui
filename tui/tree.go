@@ -136,7 +136,13 @@ func formatSnapshotLabel(s *model.Session) string {
 	}
 
 	desc := ""
-	if s.Title != "" {
+	if s.Summary != "" {
+		summary := s.Summary
+		if len(summary) > 45 {
+			summary = summary[:45] + "…"
+		}
+		desc = TitleStyle.Render(summary)
+	} else if s.Title != "" {
 		desc = TitleStyle.Render(s.Title)
 	} else if s.LastMsg != "" {
 		msg := s.LastMsg
@@ -314,16 +320,21 @@ func renderProjectNode(node *TreeNode, width int) string {
 
 		if len(parts) > 0 {
 			chips = " " + strings.Join(parts, " ")
-		} else if latest.LastMsg != "" {
-			msg := latest.LastMsg
-			maxMsg := width - 25
-			if maxMsg < 15 {
-				maxMsg = 15
+		} else {
+			msg := latest.Summary
+			if msg == "" {
+				msg = latest.LastMsg
 			}
-			if len(msg) > maxMsg {
-				msg = msg[:maxMsg] + "…"
+			if msg != "" {
+				maxMsg := width - 25
+				if maxMsg < 15 {
+					maxMsg = 15
+				}
+				if len(msg) > maxMsg {
+					msg = msg[:maxMsg] + "…"
+				}
+				chips = " " + DimStyle.Render(msg)
 			}
-			chips = " " + DimStyle.Render(msg)
 		}
 	}
 

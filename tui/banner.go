@@ -22,7 +22,7 @@ var dividerColors = []string{
 }
 
 // renderBanner creates a full-width gradient banner with title and status.
-func renderBanner(width int, groups []model.ProjectGroup, filterText string, hasErr bool, tick int) string {
+func renderBanner(width int, groups []model.ProjectGroup, filterText string, hasErr bool, tick int, steerKit bool) string {
 	if width < 10 {
 		width = 10
 	}
@@ -38,7 +38,7 @@ func renderBanner(width int, groups []model.ProjectGroup, filterText string, has
 
 	title := " ⚡CC Sessions "
 	titleLen := lipgloss.Width(title)
-	right := buildRightStatus(width-titleLen-2, activeCount, len(groups), totalSessions, filterText)
+	right := buildRightStatus(width-titleLen-2, activeCount, len(groups), totalSessions, filterText, steerKit)
 
 	totalLen := width
 	rightLen := lipgloss.Width(right)
@@ -114,32 +114,36 @@ func renderBanner(width int, groups []model.ProjectGroup, filterText string, has
 	return result.String()
 }
 
-func buildRightStatus(avail, active, projects, sessions int, filter string) string {
+func buildRightStatus(avail, active, projects, sessions int, filter string, steerKit bool) string {
 	if avail < 5 {
 		return ""
 	}
 
 	candidates := []string{}
 	div := "◆"
+	sk := ""
+	if steerKit {
+		sk = "⚡"
+	}
 
 	if filter != "" {
 		candidates = append(candidates,
-			fmt.Sprintf(" 🔍%s ◆ ● %d ◆ %dp %ds ", filter, active, projects, sessions),
+			fmt.Sprintf(" %s🔍%s ◆ ● %d ◆ %dp %ds ", sk, filter, active, projects, sessions),
 		)
 	}
 
 	if active > 0 {
 		candidates = append(candidates,
-			fmt.Sprintf(" ● %d active %s %d proj %s %d sess ", active, div, projects, div, sessions),
-			fmt.Sprintf(" ● %d %s %dp %ds ", active, div, projects, sessions),
-			fmt.Sprintf(" ● %d %s %dp ", active, div, projects),
-			fmt.Sprintf(" ● %d ", active),
+			fmt.Sprintf(" %s● %d active %s %d proj %s %d sess ", sk, active, div, projects, div, sessions),
+			fmt.Sprintf(" %s● %d %s %dp %ds ", sk, active, div, projects, sessions),
+			fmt.Sprintf(" %s● %d %s %dp ", sk, active, div, projects),
+			fmt.Sprintf(" %s● %d ", sk, active),
 		)
 	} else {
 		candidates = append(candidates,
-			fmt.Sprintf(" %d proj %s %d sess ", projects, div, sessions),
-			fmt.Sprintf(" %dp %s %ds ", projects, div, sessions),
-			fmt.Sprintf(" %dp ", projects),
+			fmt.Sprintf(" %s%d proj %s %d sess ", sk, projects, div, sessions),
+			fmt.Sprintf(" %s%dp %s %ds ", sk, projects, div, sessions),
+			fmt.Sprintf(" %s%dp ", sk, projects),
 		)
 	}
 

@@ -12,6 +12,7 @@ type Session struct {
 	LastActive time.Time `json:"last_active"`
 	GitBranch  string    `json:"git_branch"`
 	LastMsg    string    `json:"last_msg"`
+	Summary    string    `json:"summary,omitempty"` // session summary from SteerKit
 
 	Plan  *Plan  `json:"plan,omitempty"`
 	Tasks []Task `json:"tasks,omitempty"`

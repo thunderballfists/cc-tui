@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -31,6 +32,10 @@ type App struct {
 	filtering   bool
 	filter      textinput.Model
 	filterText  string
+	steerKitAvailable  bool
+	sessionSummaries   map[string]string // sessionID → summary from SteerKit
+	showSearch         bool
+	search             SearchState
 	err            error
 	expandState    map[string]bool
 	tick           int
@@ -61,6 +66,7 @@ func NewApp(conn net.Conn) *App {
 		expandState: make(map[string]bool),
 		showPreview: false,
 		filter:      fi,
+		search:      NewSearchState(),
 	}
 }
 
@@ -69,6 +75,7 @@ func (a *App) Init() tea.Cmd {
 		a.fetchTree(),
 		tea.EnableMouseCellMotion,
 		tickCmd(),
+		checkSteerKitCmd,
 	)
 }
 
@@ -174,6 +181,24 @@ func (a *App) applyFilter(groups []model.ProjectGroup) []model.ProjectGroup {
 	return filtered
 }
 
+// jumpToSession expands the project containing sessionID and scrolls to it.
+func (a *App) jumpToSession(sessionID string) bool {
+	for _, g := range a.groups {
+		for _, s := range g.Sessions {
+			if s.ID == sessionID {
+				a.expandState["p:"+g.Project] = true
+				a.filterText = ""
+				a.filter.SetValue("")
+				filtered := a.applyFilter(a.groups)
+				a.tree.SetGroups(filtered, a.expandState)
+				a.tree.ScrollToSession(sessionID)
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -186,6 +211,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case groupsMsg:
 		a.err = nil
 		a.groups = []model.ProjectGroup(msg)
+		// Enrich sessions with SteerKit summaries
+		if len(a.sessionSummaries) > 0 {
+			for i := range a.groups {
+				for j := range a.groups[i].Sessions {
+					if s, ok := a.sessionSummaries[a.groups[i].Sessions[j].ID]; ok {
+						a.groups[i].Sessions[j].Summary = s
+					}
+				}
+			}
+		}
 		filtered := a.applyFilter(a.groups)
 		a.tree.SetGroups(filtered, a.expandState)
 		return a, nil
@@ -196,6 +231,36 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case convMsg:
 		a.preview.SetMessages([]model.ConvMessage(msg))
+		return a, nil
+
+	case steerKitAvailableMsg:
+		a.steerKitAvailable = msg.available
+		if msg.available {
+			return a, fetchSessionSummariesCmd
+		}
+		return a, nil
+
+	case sessionSummariesMsg:
+		if msg.summaries != nil {
+			a.sessionSummaries = msg.summaries
+		}
+		return a, nil
+
+	case searchResultsMsg:
+		a.search.querying = false
+		if len(msg.results) == 0 {
+			a.search.noResults = true
+		} else {
+			// Enrich results with session summaries
+			for i, r := range msg.results {
+				if summary, ok := a.sessionSummaries[r.SessionID]; ok {
+					msg.results[i].SessionSummary = summary
+				}
+			}
+			a.search.results = msg.results
+			a.search.cursor = 0
+			a.search.offset = 0
+		}
 		return a, nil
 
 	case errMsg:
@@ -309,6 +374,73 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
+		// Search mode
+		if a.showSearch {
+			// Input mode: all keys go to text input except esc/enter
+			if len(a.search.results) == 0 && !a.search.querying {
+				switch msg.String() {
+				case "esc":
+					if a.search.noResults {
+						a.search.noResults = false
+						return a, nil
+					}
+					a.showSearch = false
+					a.search.Reset()
+					return a, nil
+				case "enter":
+					query := a.search.input.Value()
+					if query != "" {
+						a.search.querying = true
+						a.search.noResults = false
+						return a, doRecallSearch(query)
+					}
+					return a, nil
+				default:
+					a.search.noResults = false
+					var cmd tea.Cmd
+					a.search.input, cmd = a.search.input.Update(msg)
+					return a, cmd
+				}
+			}
+			// Results mode: j/k navigate, esc/slash go back to input
+			switch msg.String() {
+			case "esc", "/":
+				a.search.ClearResults()
+				a.search.input.Focus()
+				return a, a.search.input.Cursor.BlinkCmd()
+			case "enter":
+				if len(a.search.results) > 0 {
+					r := a.search.results[a.search.cursor]
+					a.showSearch = false
+					found := a.jumpToSession(r.SessionID)
+					if !found {
+						a.err = fmt.Errorf("session not in cache")
+					}
+					a.search.Reset()
+					return a, nil
+				}
+				return a, nil
+			case "up", "k":
+				if len(a.search.results) > 0 && a.search.cursor > 0 {
+					a.search.cursor--
+					if a.search.cursor < a.search.offset {
+						a.search.offset = a.search.cursor
+					}
+				}
+				return a, nil
+			case "down", "j":
+				if len(a.search.results) > 0 && a.search.cursor < len(a.search.results)-1 {
+					a.search.cursor++
+					viewH := a.search.contentHeight()
+					if a.search.cursor >= a.search.offset+viewH {
+						a.search.offset = a.search.cursor - viewH + 1
+					}
+				}
+				return a, nil
+			}
+			return a, nil
+		}
+
 		// Filter mode
 		if a.filtering {
 			switch msg.String() {
@@ -348,6 +480,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.filter.Focus()
 			return a, a.filter.Cursor.BlinkCmd()
 		}
+		if key.Matches(msg, a.tree.keys.Search) && a.steerKitAvailable {
+			a.showSearch = true
+			a.search.Reset()
+			a.search.SetSize(a.width, a.height)
+			a.search.input.Focus()
+			return a, a.search.input.Cursor.BlinkCmd()
+		}
 		// 'p' opens preview overlay
 		if msg.String() == "p" {
 			g := a.tree.findGroupForCursor()
@@ -377,18 +516,33 @@ func (a *App) View() string {
 		return RenderHelpOverlay(a.tree.keys, a.width, a.height)
 	}
 
+	// Search overlay
+	if a.showSearch {
+		header := renderBanner(a.width, a.groups, a.filterText, a.err != nil, a.tick, a.steerKitAvailable)
+		var footer string
+		if len(a.search.results) == 0 && !a.search.querying {
+			footer = a.search.input.View()
+		} else {
+			footer = HelpStyle.Render("  ↑↓ navigate  ⏎ select  / new search  esc back")
+		}
+		a.search.SetSize(a.width, a.height)
+		return lipgloss.JoinVertical(lipgloss.Left, header, a.search.View(), footer)
+	}
+
 	// Preview overlay
 	if a.showPreview {
 		return a.preview.View()
 	}
 
 	// Header
-	header := renderBanner(a.width, a.groups, a.filterText, a.err != nil, a.tick)
+	header := renderBanner(a.width, a.groups, a.filterText, a.err != nil, a.tick, a.steerKitAvailable)
 
 	// Footer
 	var footer string
 	if a.filtering {
 		footer = a.filter.View()
+	} else if a.steerKitAvailable {
+		footer = HelpStyle.Render("  ↑↓ navigate  ←→ expand  ⏎ open  n new  / filter  s search  p preview  ? help  q quit")
 	} else {
 		footer = HelpStyle.Render("  ↑↓ navigate  ←→ expand  ⏎ open  n new  / filter  p preview  ? help  q quit")
 	}

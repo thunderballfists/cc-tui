@@ -227,6 +227,35 @@ func (m *TreeModel) jumpToParent() {
 	}
 }
 
+// ScrollToSession finds a session by ID in the visible nodes,
+// sets the cursor to it, and adjusts scroll offset to center it.
+// Returns false if the session is not in the visible list.
+func (m *TreeModel) ScrollToSession(sessionID string) bool {
+	for i, node := range m.visible {
+		if node.Kind == NodeSnapshot && node.Session != nil && node.Session.ID == sessionID {
+			m.cursor = i
+			// Center in viewport
+			viewHeight := m.height - 3
+			if viewHeight < 1 {
+				viewHeight = 1
+			}
+			m.scrollOffset = m.cursor - viewHeight/2
+			if m.scrollOffset < 0 {
+				m.scrollOffset = 0
+			}
+			maxOffset := len(m.visible) - viewHeight
+			if maxOffset < 0 {
+				maxOffset = 0
+			}
+			if m.scrollOffset > maxOffset {
+				m.scrollOffset = maxOffset
+			}
+			return true
+		}
+	}
+	return false
+}
+
 func (m *TreeModel) findGroupForCursor() *model.ProjectGroup {
 	if m.cursor >= len(m.visible) {
 		return nil
