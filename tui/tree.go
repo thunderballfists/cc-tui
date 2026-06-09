@@ -156,7 +156,7 @@ func formatSnapshotLabel(s *model.Session) string {
 
 	size := ""
 	if tok := formatTokens(s.ContextTokens); tok != "" {
-		size = " " + TokenStyle.Render("("+tok+")")
+		size = " " + TokenStyle.Render("• "+tok)
 	}
 
 	if ts != "" && desc != "" {
@@ -312,7 +312,7 @@ func renderProjectNode(node *TreeNode, width int) string {
 	sizeStr := ""
 	if len(g.Sessions) > 0 {
 		if tok := formatTokens(g.Sessions[0].ContextTokens); tok != "" {
-			sizeStr = " " + TokenStyle.Render("("+tok+")")
+			sizeStr = " " + TokenStyle.Render("• "+tok)
 		}
 	}
 
