@@ -61,14 +61,15 @@ func (c *Cache) Reload() error {
 			}
 			meta := LoadSessionMeta(jsonlPath)
 			s := model.Session{
-				ID:         e.ID,
-				Project:    e.Project,
-				DirName:    dirName(e.Project),
-				LastActive: timeFromMillis(e.LastTS),
-				Slug:       meta.Slug,
-				Title:      CleanTitle(meta.Title),
-				GitBranch:  meta.GitBranch,
-				LastMsg:    CleanMessage(meta.LastUserMsg),
+				ID:            e.ID,
+				Project:       e.Project,
+				DirName:       dirName(e.Project),
+				LastActive:    timeFromMillis(e.LastTS),
+				Slug:          meta.Slug,
+				Title:         CleanTitle(meta.Title),
+				GitBranch:     meta.GitBranch,
+				LastMsg:       CleanMessage(meta.LastUserMsg),
+				ContextTokens: meta.ContextTokens,
 			}
 			sessions = append(sessions, s)
 		}

@@ -5,4 +5,4 @@
 {"type":"user","message":{"role":"user","content":"exit"},"timestamp":"2024-01-01T00:00:00Z","gitBranch":"main"}
 {"type":"assistant","message":{"role":"assistant","content":"OK"},"timestamp":"2024-01-01T00:01:00Z"}
 {"type":"user","message":{"role":"user","content":"Implement the REST API endpoints for the user service"},"timestamp":"2024-01-01T00:02:00Z","gitBranch":"feat/user-api"}
-{"type":"assistant","message":{"role":"assistant","content":"I'll implement the REST API endpoints."},"timestamp":"2024-01-01T00:03:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":"I'll implement the REST API endpoints.","usage":{"input_tokens":10,"cache_creation_input_tokens":2000,"cache_read_input_tokens":50000,"output_tokens":490}},"timestamp":"2024-01-01T00:03:00Z"}

@@ -13,6 +13,7 @@ var (
 	TitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaf00")) // warm yellow
 	PlanLabel  = lipgloss.NewStyle().Foreground(lipgloss.Color("#5f87ff")) // soft blue
 	DimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+	TokenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("239")) // dark gray context-size hint
 	WIPStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaf00"))
 	DoneStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff87"))
 

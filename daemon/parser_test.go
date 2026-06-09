@@ -51,6 +51,10 @@ func TestLoadSessionMeta(t *testing.T) {
 	if meta.GitBranch != "feat/user-api" {
 		t.Errorf("gitBranch = %q, want feat/user-api", meta.GitBranch)
 	}
+	// Context size = sum of the last assistant message's usage fields.
+	if meta.ContextTokens != 52500 {
+		t.Errorf("contextTokens = %d, want 52500", meta.ContextTokens)
+	}
 }
 
 func TestLoadTasks(t *testing.T) {

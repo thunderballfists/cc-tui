@@ -154,13 +154,33 @@ func formatSnapshotLabel(s *model.Session) string {
 		desc = DimStyle.Render("·")
 	}
 
+	size := ""
+	if tok := formatTokens(s.ContextTokens); tok != "" {
+		size = " " + TokenStyle.Render("("+tok+")")
+	}
+
 	if ts != "" && desc != "" {
-		return ts + " " + DimStyle.Render("│") + " " + desc
+		return ts + " " + DimStyle.Render("│") + " " + desc + size
 	}
 	if ts != "" {
-		return ts
+		return ts + size
 	}
-	return desc
+	return desc + size
+}
+
+// formatTokens renders a context-size hint like "274K" or "1.2M".
+// Returns "" for zero so sessions without usage data show nothing.
+func formatTokens(n int) string {
+	switch {
+	case n <= 0:
+		return ""
+	case n < 1000:
+		return fmt.Sprintf("%d", n)
+	case n < 1_000_000:
+		return fmt.Sprintf("%dK", (n+500)/1000)
+	default:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
 }
 
 func formatStep(step model.PlanStep) string {
@@ -288,6 +308,14 @@ func renderProjectNode(node *TreeNode, width int) string {
 		timeStr = " " + DimStyle.Render(rt)
 	}
 
+	// Context size of the latest session
+	sizeStr := ""
+	if len(g.Sessions) > 0 {
+		if tok := formatTokens(g.Sessions[0].ContextTokens); tok != "" {
+			sizeStr = " " + TokenStyle.Render("("+tok+")")
+		}
+	}
+
 	// Summary chips for collapsed projects
 	chips := ""
 	if !node.Expanded && len(g.Sessions) > 0 {
@@ -338,7 +366,7 @@ func renderProjectNode(node *TreeNode, width int) string {
 		}
 	}
 
-	return arrow + dot + name + timeStr + chips
+	return arrow + dot + name + timeStr + sizeStr + chips
 }
 
 func renderSnapshotNode(node *TreeNode, width int) string {

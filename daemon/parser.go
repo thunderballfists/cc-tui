@@ -120,10 +120,23 @@ func LoadHistory(historyPath string) ([]HistoryEntry, error) {
 }
 
 type SessionMeta struct {
-	Slug        string
-	Title       string
-	LastUserMsg string
-	GitBranch   string
+	Slug          string
+	Title         string
+	LastUserMsg   string
+	GitBranch     string
+	ContextTokens int // live context size from the last assistant message's usage
+}
+
+// sumContextTokens totals the token fields that make up the live context
+// window: prompt input, cache creation, cache read, and output.
+func sumContextTokens(usage map[string]interface{}) int {
+	total := 0
+	for _, k := range []string{"input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"} {
+		if v, ok := usage[k].(float64); ok {
+			total += int(v)
+		}
+	}
+	return total
 }
 
 func LoadSessionMeta(jsonlPath string) SessionMeta {
@@ -189,6 +202,16 @@ func LoadSessionMeta(jsonlPath string) SessionMeta {
 			}
 		}
 
+		// First assistant message seen going backward is the last in the file —
+		// its usage reflects the current live context size.
+		if dtype == "assistant" && meta.ContextTokens == 0 {
+			if msg, ok := d["message"].(map[string]interface{}); ok {
+				if usage, ok := msg["usage"].(map[string]interface{}); ok {
+					meta.ContextTokens = sumContextTokens(usage)
+				}
+			}
+		}
+
 		if dtype == "user" && meta.LastUserMsg == "" {
 			msg, _ := d["message"].(map[string]interface{})
 			if msg != nil {
@@ -212,7 +235,7 @@ func LoadSessionMeta(jsonlPath string) SessionMeta {
 			}
 		}
 
-		if meta.Title != "" && meta.LastUserMsg != "" && meta.Slug != "" {
+		if meta.Title != "" && meta.LastUserMsg != "" && meta.Slug != "" && meta.ContextTokens != 0 {
 			break
 		}
 	}
@@ -591,6 +614,7 @@ func LoadFullSession(entry HistoryEntry, dirs Dirs) model.Session {
 		s.Title = CleanTitle(meta.Title)
 		s.GitBranch = meta.GitBranch
 		s.LastMsg = CleanMessage(meta.LastUserMsg)
+		s.ContextTokens = meta.ContextTokens
 	}
 
 	if uuid != "" {
