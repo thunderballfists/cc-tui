@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -68,11 +69,32 @@ func fetchSessionSummariesCmd() tea.Msg {
 
 	m := make(map[string]string, len(body.Sessions))
 	for _, s := range body.Sessions {
-		if s.Summary != "" {
+		if isUsableSummary(s.Summary) {
 			m[s.SessionID] = s.Summary
 		}
 	}
 	return sessionSummariesMsg{m}
+}
+
+// isUsableSummary reports whether a SteerKit session summary is a real,
+// human-meaningful summary rather than an auto-generated dump. SteerKit
+// currently returns raw JSON blobs ('{"session_id":...') and transcript
+// statistics ("Session transcript: N user exchanges, ...") in this field;
+// those must not override a session's real title in the tree.
+func isUsableSummary(summary string) bool {
+	s := strings.TrimSpace(summary)
+	if s == "" {
+		return false
+	}
+	// Raw JSON object/array dump
+	if strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[") {
+		return false
+	}
+	// Auto-generated transcript statistics
+	if strings.HasPrefix(strings.ToLower(s), "session transcript:") {
+		return false
+	}
+	return true
 }
 
 // recallResult maps the relevant fields from GET /recall response.
