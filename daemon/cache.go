@@ -49,15 +49,16 @@ func (c *Cache) Reload() error {
 		// Load full data only for the most recent snapshot
 		latest := LoadFullSession(ents[0], c.dirs)
 
-		// Build lightweight snapshots for the rest — use each session's own JSONL
-		// Skip sessions whose JSONL file is missing (deleted/never persisted)
+		// Build lightweight snapshots for the rest — use each session's own JSONL.
+		// Skip sessions whose JSONL is missing: Claude Code deletes transcripts
+		// after ~30 days, and a session with no transcript can't be resumed.
 		encoded := EncodeProjectPath(proj)
 		sessions := make([]model.Session, 0, len(ents))
 		sessions = append(sessions, latest)
 		for _, e := range ents[1:] {
 			jsonlPath := filepath.Join(c.dirs.Projects, encoded, e.ID+".jsonl")
 			if _, err := os.Stat(jsonlPath); err != nil {
-				continue // JSONL gone — skip this snapshot
+				continue // transcript gone — not resumable, skip
 			}
 			meta := LoadSessionMeta(jsonlPath)
 			s := model.Session{

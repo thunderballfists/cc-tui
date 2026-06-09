@@ -35,6 +35,19 @@ func TestLoadHistory(t *testing.T) {
 	if sessions[0].ID != "def-456" {
 		t.Errorf("first session = %q, want def-456", sessions[0].ID)
 	}
+	// LastDisplay should hold the most recent prompt text per session.
+	var abc *HistoryEntry
+	for i := range sessions {
+		if sessions[i].ID == "abc-123" {
+			abc = &sessions[i]
+		}
+	}
+	if abc == nil {
+		t.Fatal("abc-123 missing from history")
+	}
+	if abc.LastDisplay != "most recent prompt for abc-123" {
+		t.Errorf("LastDisplay = %q, want most recent prompt", abc.LastDisplay)
+	}
 }
 
 func TestLoadSessionMeta(t *testing.T) {
@@ -175,6 +188,7 @@ func TestCleanMessage(t *testing.T) {
 		{"Fix the 8a3b4c5d commit issue", "Fix the commit issue"},
 		{"hi", ""},
 		{"Implement the REST API endpoints for the user service", "Implement the REST API endpoints for the user service"},
+		{"Set model to \x1b[1mOpus 4.8\x1b[22m now", "Set model to Opus 4.8 now"},
 	}
 	for _, tt := range tests {
 		got := CleanMessage(tt.input)

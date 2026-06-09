@@ -56,9 +56,10 @@ func FindSessionUUID(projectPath, projectsDir string) (uuid string, jsonlPath st
 }
 
 type HistoryEntry struct {
-	ID      string
-	Project string
-	LastTS  int64
+	ID          string
+	Project     string
+	LastTS      int64
+	LastDisplay string // most recent prompt text (fallback label when transcript is gone)
 }
 
 func LoadHistory(historyPath string) ([]HistoryEntry, error) {
@@ -72,9 +73,10 @@ func LoadHistory(historyPath string) ([]HistoryEntry, error) {
 	defer f.Close()
 
 	type sessionAcc struct {
-		id      string
-		project string
-		lastTS  int64
+		id          string
+		project     string
+		lastTS      int64
+		lastDisplay string
 	}
 	byID := make(map[string]*sessionAcc)
 
@@ -85,6 +87,7 @@ func LoadHistory(historyPath string) ([]HistoryEntry, error) {
 			SessionID string `json:"sessionId"`
 			Project   string `json:"project"`
 			Timestamp int64  `json:"timestamp"`
+			Display   string `json:"display"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
@@ -97,8 +100,12 @@ func LoadHistory(historyPath string) ([]HistoryEntry, error) {
 			acc = &sessionAcc{id: entry.SessionID, project: entry.Project}
 			byID[entry.SessionID] = acc
 		}
-		if entry.Timestamp > acc.lastTS {
+		// Keep the display text from the most recent entry seen.
+		if entry.Timestamp >= acc.lastTS {
 			acc.lastTS = entry.Timestamp
+			if entry.Display != "" {
+				acc.lastDisplay = entry.Display
+			}
 		}
 		if entry.Project != "" {
 			acc.project = entry.Project
@@ -108,9 +115,10 @@ func LoadHistory(historyPath string) ([]HistoryEntry, error) {
 	result := make([]HistoryEntry, 0, len(byID))
 	for _, acc := range byID {
 		result = append(result, HistoryEntry{
-			ID:      acc.id,
-			Project: acc.project,
-			LastTS:  acc.lastTS,
+			ID:          acc.id,
+			Project:     acc.project,
+			LastTS:      acc.lastTS,
+			LastDisplay: acc.lastDisplay,
 		})
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -521,6 +529,7 @@ func MatchStepCompletion(steps []model.PlanStep, tasks []model.Task, todos []mod
 }
 
 var (
+	ansiRe    = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 	xmlTagRe  = regexp.MustCompile(`<[^>]*>?`)
 	toolIDRe  = regexp.MustCompile(`toolu_\w+`)
 	hexHashRe = regexp.MustCompile(`\b[a-f0-9]{7,}\b`)
@@ -535,6 +544,7 @@ var skipPrefixes = []string{
 }
 
 func CleanMessage(msg string) string {
+	msg = ansiRe.ReplaceAllString(msg, "")
 	msg = xmlTagRe.ReplaceAllString(msg, "")
 	msg = toolIDRe.ReplaceAllString(msg, "")
 	msg = hexHashRe.ReplaceAllString(msg, "")
@@ -585,6 +595,7 @@ type Dirs struct {
 	Todos    string // ~/.claude/todos
 	Plans    string // ~/.claude/plans
 	History  string // ~/.claude/history.jsonl
+	Archive  string // ~/.claude/cc-tui-archive
 }
 
 func DefaultDirs() Dirs {
@@ -596,6 +607,7 @@ func DefaultDirs() Dirs {
 		Todos:    filepath.Join(claude, "todos"),
 		Plans:    filepath.Join(claude, "plans"),
 		History:  filepath.Join(claude, "history.jsonl"),
+		Archive:  filepath.Join(claude, "cc-tui-archive"),
 	}
 }
 

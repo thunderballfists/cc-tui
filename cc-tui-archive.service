@@ -1,0 +1,8 @@
+[Unit]
+Description=cc-tui archive sync — mirror Claude Code transcripts before deletion
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh __INSTALL_DIR__/cc-tui-archive-sync.sh
+StandardOutput=append:__HOME__/.claude/cc-tui-archive.log
+StandardError=append:__HOME__/.claude/cc-tui-archive.log

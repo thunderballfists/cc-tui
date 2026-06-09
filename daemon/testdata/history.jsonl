@@ -1,3 +1,3 @@
-{"sessionId":"abc-123","project":"/Users/test/proj-a","timestamp":1700000000000}
-{"sessionId":"abc-123","project":"/Users/test/proj-a","timestamp":1700001000000}
-{"sessionId":"def-456","project":"/Users/test/proj-b","timestamp":1700002000000}
+{"sessionId":"abc-123","project":"/Users/test/proj-a","timestamp":1700000000000,"display":"first prompt in this session"}
+{"sessionId":"abc-123","project":"/Users/test/proj-a","timestamp":1700001000000,"display":"most recent prompt for abc-123"}
+{"sessionId":"def-456","project":"/Users/test/proj-b","timestamp":1700002000000,"display":"the only prompt for def-456"}

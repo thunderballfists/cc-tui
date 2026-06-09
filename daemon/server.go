@@ -70,6 +70,21 @@ func (s *Server) handleConn(conn net.Conn) {
 		case "conversation":
 			s.handleConversation(req, enc)
 
+		case "archive-list":
+			groups, bytes := ListArchive(s.cache.dirs)
+			enc.Encode(protocol.Response{Type: "archives", Archives: groups, ArchiveBytes: bytes})
+
+		case "archive-restore":
+			if err := RestoreArchive(s.cache.dirs, req.SessionID); err != nil {
+				enc.Encode(protocol.Response{Type: "error", Error: err.Error()})
+			} else {
+				enc.Encode(protocol.Response{Type: "ok"})
+			}
+
+		case "archive-open":
+			OpenPath(s.cache.dirs.Archive)
+			enc.Encode(protocol.Response{Type: "ok"})
+
 		case "subscribe":
 			s.streamUpdates(conn, enc)
 			return

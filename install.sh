@@ -120,6 +120,41 @@ else
   fi
 fi
 
+# --- Install archive sync job ---
+
+echo ""
+chmod +x "$INSTALL_DIR/cc-tui-archive-sync.sh"
+
+if [ "$OS" = "Darwin" ]; then
+  ARCHIVE_PLIST="com.cc-tui.archive"
+  ARCHIVE_SRC="$INSTALL_DIR/$ARCHIVE_PLIST.plist"
+  ARCHIVE_DST="$HOME_DIR/Library/LaunchAgents/$ARCHIVE_PLIST.plist"
+
+  echo "Installing archive sync (daily launchd job)..."
+  if [ -f "$ARCHIVE_DST" ]; then
+    launchctl unload "$ARCHIVE_DST" 2>/dev/null || true
+  fi
+  sed -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
+      -e "s|__HOME__|$HOME_DIR|g" \
+      "$ARCHIVE_SRC" > "$ARCHIVE_DST"
+  launchctl load "$ARCHIVE_DST"
+  echo "  Archive sync installed (runs daily at 12:00 and at login)"
+else
+  ARCHIVE_SERVICE_SRC="$INSTALL_DIR/cc-tui-archive.service"
+  ARCHIVE_TIMER_SRC="$INSTALL_DIR/cc-tui-archive.timer"
+  SERVICE_DIR="$HOME_DIR/.config/systemd/user"
+
+  echo "Installing archive sync (daily systemd timer)..."
+  mkdir -p "$SERVICE_DIR"
+  sed -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
+      -e "s|__HOME__|$HOME_DIR|g" \
+      "$ARCHIVE_SERVICE_SRC" > "$SERVICE_DIR/cc-tui-archive.service"
+  cp "$ARCHIVE_TIMER_SRC" "$SERVICE_DIR/cc-tui-archive.timer"
+  systemctl --user daemon-reload
+  systemctl --user enable --now cc-tui-archive.timer
+  echo "  Archive sync timer installed (runs daily at 12:00)"
+fi
+
 # --- Toggle script ---
 
 echo ""

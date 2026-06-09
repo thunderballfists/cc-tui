@@ -36,6 +36,8 @@ type App struct {
 	sessionSummaries   map[string]string // sessionID → summary from SteerKit
 	showSearch         bool
 	search             SearchState
+	showArchive        bool
+	archive            ArchiveState
 	err            error
 	expandState    map[string]bool
 	tick           int
@@ -47,6 +49,12 @@ type convMsg []model.ConvMessage
 type groupsMsg []model.ProjectGroup
 type errMsg struct{ err error }
 type tickMsg time.Time
+
+type archiveMsg struct {
+	groups []model.ArchivedGroup
+	bytes  int64
+}
+type archiveRestoredMsg struct{ id string }
 
 func (e errMsg) Error() string { return e.err.Error() }
 
@@ -128,6 +136,36 @@ func (a *App) fetchConversation(sessionID string) tea.Cmd {
 			return errMsg{err}
 		}
 		return convMsg(resp.Conversation)
+	}
+}
+
+func (a *App) fetchArchive() tea.Cmd {
+	return func() tea.Msg {
+		resp, err := a.doRequest(protocol.Request{Cmd: "archive-list"})
+		if err != nil {
+			return errMsg{err}
+		}
+		return archiveMsg{groups: resp.Archives, bytes: resp.ArchiveBytes}
+	}
+}
+
+func (a *App) restoreArchive(sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := a.doRequest(protocol.Request{Cmd: "archive-restore", SessionID: sessionID})
+		if err != nil {
+			return errMsg{err}
+		}
+		if resp.Type == "error" {
+			return errMsg{fmt.Errorf("restore failed: %s", resp.Error)}
+		}
+		return archiveRestoredMsg{id: sessionID}
+	}
+}
+
+func (a *App) openArchiveDir() tea.Cmd {
+	return func() tea.Msg {
+		a.doRequest(protocol.Request{Cmd: "archive-open"})
+		return nil
 	}
 }
 
@@ -262,6 +300,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.search.offset = 0
 		}
 		return a, nil
+
+	case archiveMsg:
+		a.archive.SetData(msg.groups, msg.bytes)
+		return a, nil
+
+	case archiveRestoredMsg:
+		a.archive.markRestored(msg.id)
+		return a, a.fetchTree() // refresh so the restored session appears in the tree
 
 	case errMsg:
 		a.err = msg.err
@@ -441,6 +487,36 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
+		// Archive mode
+		if a.showArchive {
+			switch msg.String() {
+			case "esc", "A":
+				a.showArchive = false
+				return a, nil
+			case "up", "k":
+				a.archive.moveCursor(-1)
+				return a, nil
+			case "down", "j":
+				a.archive.moveCursor(1)
+				return a, nil
+			case "g", "home":
+				a.archive.cursor = 0
+				a.archive.offset = 0
+				return a, nil
+			case "G", "end":
+				a.archive.moveCursor(len(a.archive.rows))
+				return a, nil
+			case "o":
+				return a, a.openArchiveDir()
+			case "enter":
+				if s, ok := a.archive.selected(); ok && !s.LiveCopy {
+					return a, a.restoreArchive(s.ID)
+				}
+				return a, nil
+			}
+			return a, nil
+		}
+
 		// Filter mode
 		if a.filtering {
 			switch msg.String() {
@@ -487,6 +563,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.search.input.Focus()
 			return a, a.search.input.Cursor.BlinkCmd()
 		}
+		if key.Matches(msg, a.tree.keys.Archive) {
+			a.showArchive = true
+			a.archive.Reset()
+			a.archive.SetSize(a.width, a.height)
+			return a, a.fetchArchive()
+		}
 		// 'p' opens preview overlay
 		if msg.String() == "p" {
 			g := a.tree.findGroupForCursor()
@@ -529,9 +611,17 @@ func (a *App) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, header, a.search.View(), footer)
 	}
 
-	// Preview overlay
+	// Preview overlay (also reachable from archive view)
 	if a.showPreview {
 		return a.preview.View()
+	}
+
+	// Archive overlay
+	if a.showArchive {
+		a.archive.SetSize(a.width, a.height)
+		header := renderBanner(a.width, a.groups, a.filterText, a.err != nil, a.tick, a.steerKitAvailable)
+		footer := HelpStyle.Render("  ↑↓ navigate  ⏎ restore  o open dir  esc back")
+		return lipgloss.JoinVertical(lipgloss.Left, header, a.archive.HeaderLine(), a.archive.View(), footer)
 	}
 
 	// Header
@@ -542,9 +632,9 @@ func (a *App) View() string {
 	if a.filtering {
 		footer = a.filter.View()
 	} else if a.steerKitAvailable {
-		footer = HelpStyle.Render("  ↑↓ navigate  ←→ expand  ⏎ open  n new  / filter  s search  p preview  ? help  q quit")
+		footer = HelpStyle.Render("  ↑↓ nav  ⏎ open  n new  / filter  s search  A archive  p preview  ? help  q quit")
 	} else {
-		footer = HelpStyle.Render("  ↑↓ navigate  ←→ expand  ⏎ open  n new  / filter  p preview  ? help  q quit")
+		footer = HelpStyle.Render("  ↑↓ nav  ←→ expand  ⏎ open  n new  / filter  A archive  p preview  ? help  q quit")
 	}
 
 	contentHeight := a.height - 2 // header + footer

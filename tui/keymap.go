@@ -13,6 +13,7 @@ type KeyMap struct {
 	Kill    key.Binding
 	Filter  key.Binding
 	Search  key.Binding
+	Archive key.Binding
 	Refresh key.Binding
 	Help    key.Binding
 	Quit    key.Binding
@@ -32,6 +33,7 @@ func DefaultKeyMap() KeyMap {
 		Kill:    key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "kill")),
 		Filter:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 		Search:  key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search")),
+		Archive: key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "archive")),
 		Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:    key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("q", "quit")),
@@ -50,7 +52,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Left, k.Right},
 		{k.Open, k.Window, k.New, k.Kill},
-		{k.Filter, k.Search, k.Refresh, k.Help, k.Quit},
+		{k.Filter, k.Search, k.Archive, k.Refresh, k.Help, k.Quit},
 		{k.Top, k.Bottom},
 	}
 }
