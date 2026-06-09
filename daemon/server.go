@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"cc-tui/model"
 	"cc-tui/protocol"
 )
 
@@ -76,40 +77,55 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 }
 
-func (s *Server) handleAction(req protocol.Request, enc *json.Encoder) {
-	groups := s.cache.Groups()
+// actionTarget is the resolved session/project an action will operate on.
+type actionTarget struct {
+	SessionID string
+	Project   string
+	Active    bool
+	PaneLabel string
+	Found     bool
+}
 
-	// Find the target session/project
-	var targetID, targetProject, targetPaneLabel string
-	var targetActive bool
-
+// resolveActionTarget finds the session/project an action refers to.
+// reqID may be a session UUID (specific snapshot) or a project path (latest session).
+// When matching a specific session, the Active/PaneLabel come from that session,
+// not the group — selecting a non-latest snapshot must not inherit the latest
+// session's running pane.
+func resolveActionTarget(groups []model.ProjectGroup, reqID string) actionTarget {
 	for _, g := range groups {
 		// Match by session ID first (specific snapshot)
 		for _, sess := range g.Sessions {
-			if sess.ID == req.SessionID {
-				targetID = sess.ID
-				targetProject = g.Project
-				targetActive = g.Active
-				targetPaneLabel = g.PaneLabel
-				break
+			if sess.ID == reqID {
+				return actionTarget{
+					SessionID: sess.ID,
+					Project:   g.Project,
+					Active:    sess.Active,
+					PaneLabel: sess.PaneLabel,
+					Found:     true,
+				}
 			}
-		}
-		if targetProject != "" {
-			break
 		}
 		// Fallback: match by project path (uses latest session)
-		if g.Project == req.SessionID {
-			targetProject = g.Project
-			targetActive = g.Active
-			targetPaneLabel = g.PaneLabel
-			if len(g.Sessions) > 0 {
-				targetID = g.Sessions[0].ID
+		if g.Project == reqID {
+			t := actionTarget{
+				Project:   g.Project,
+				Active:    g.Active,
+				PaneLabel: g.PaneLabel,
+				Found:     true,
 			}
-			break
+			if len(g.Sessions) > 0 {
+				t.SessionID = g.Sessions[0].ID
+			}
+			return t
 		}
 	}
+	return actionTarget{}
+}
 
-	if targetProject == "" {
+func (s *Server) handleAction(req protocol.Request, enc *json.Encoder) {
+	t := resolveActionTarget(s.cache.Groups(), req.SessionID)
+
+	if !t.Found {
 		enc.Encode(protocol.Response{Type: "error", Error: "session not found"})
 		return
 	}
@@ -117,21 +133,21 @@ func (s *Server) handleAction(req protocol.Request, enc *json.Encoder) {
 	// Use a login shell so claude is found via user's PATH (nvm, etc.)
 	switch req.Action {
 	case "open":
-		if targetActive {
-			TmuxSwitchToPane(targetPaneLabel)
-		} else if targetID != "" {
-			TmuxSplitShell(targetProject, "claude --dangerously-skip-permissions -r "+targetID)
+		if t.Active {
+			TmuxSwitchToPane(t.PaneLabel)
+		} else if t.SessionID != "" {
+			TmuxSplitShell(t.Project, "claude --dangerously-skip-permissions -r "+t.SessionID)
 		} else {
-			TmuxSplitShell(targetProject, "claude --dangerously-skip-permissions")
+			TmuxSplitShell(t.Project, "claude --dangerously-skip-permissions")
 		}
 	case "window":
-		if targetID != "" {
-			TmuxNewWindowShell(targetProject, "claude --dangerously-skip-permissions -r "+targetID)
+		if t.SessionID != "" {
+			TmuxNewWindowShell(t.Project, "claude --dangerously-skip-permissions -r "+t.SessionID)
 		} else {
-			TmuxNewWindowShell(targetProject, "claude --dangerously-skip-permissions")
+			TmuxNewWindowShell(t.Project, "claude --dangerously-skip-permissions")
 		}
 	case "new":
-		TmuxSplitShell(targetProject, "claude --dangerously-skip-permissions")
+		TmuxSplitShell(t.Project, "claude --dangerously-skip-permissions")
 	}
 
 	enc.Encode(protocol.Response{Type: "ok"})
